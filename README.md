@@ -1,1 +1,2 @@
 # Local_File_Server
+batファイル実行でサーバー立ち上げ
