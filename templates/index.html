@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>server</title>
+  <script src="/static/script.js" defer></script>
+  <style>
+    body { display: flex; font-family: sans-serif; }
+    #file-list { width: 40%; border-right: 1px solid #ccc; padding: 1em; }
+    #preview { width: 60%; padding: 1em; white-space: pre-wrap; }
+    .file-entry { display: flex; justify-content: space-between; margin: 0.5em 0; }
+    .file-name { cursor: pointer; color: blue; }
+  </style>
+</head>
+<body>
+
+  <div id="file-list">
+
+    {% if parent_path %}
+    <div><a href="{{ url_for('browse', subpath=parent_path) }}">⬅ 戻る</a></div>
+    {% endif %}
+
+    {% if subpath %}
+      <div style="margin: 1em 0;">
+        <a href="/download-folder/{{ subpath }}">
+          <button>フォルダZIPでダウンロード</button>
+        </a>
+      </div>
+    {% endif %}
+
+    {% for entry in entries %}
+      <div class="file-entry">
+        {% if entry.type == 'file' %}
+          <span class="file-name" onclick="previewFile('{{ entry.path }}')">📄 {{ entry.name }}</span>
+          <a href="/download/{{ entry.path }}" download>Download</a>
+        {% elif entry.type == 'folder' %}
+          <span><a href="{{ url_for('browse', subpath=entry.path) }}">📁 {{ entry.name }}/</a></span>
+          <a href="/download-folder/{{ entry.path }}">ZIP</a>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+  <div id="drop-overlay"
+     style="position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.4); color: white;
+            display: none; align-items: center; justify-content: center;
+            font-size: 2em; z-index: 1000;">
+  🔽 ドロップでアップロード
+  </div>
+  
+
+
+  <div id="preview">ファイルの表示</div>
+</body>
+</html>
