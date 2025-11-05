@@ -1,55 +1,160 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
   <meta charset="UTF-8">
   <title>server</title>
   <script src="/static/script.js" defer></script>
   <style>
-    body { display: flex; font-family: sans-serif; }
-    #file-list { width: 40%; border-right: 1px solid #ccc; padding: 1em; }
-    #preview { width: 60%; padding: 1em; white-space: pre-wrap; }
-    .file-entry { display: flex; justify-content: space-between; margin: 0.5em 0; }
-    .file-name { cursor: pointer; color: blue; }
+    :root { --bar-h: 48px; }
+    body { margin: 0; font-family: sans-serif; }
+    #preview img, #preview video, #preview audio, #preview iframe {
+      max-width: 100%;
+    }
+    /* 上部パンくずバー */
+    .breadcrumb-bar {
+      position: sticky; top: 0; z-index: 10;
+      display: flex; align-items: center; gap: .5rem;
+      height: var(--bar-h);
+      padding: 0 1rem;
+      border-bottom: 1px solid #e5e5e5;
+      background: #fafafa;
+      white-space: nowrap;
+      overflow: auto hidden;
+    }
+    .breadcrumb-bar a { color: #0366d6; text-decoration: none; }
+    .breadcrumb-sep { color: #999; }
+    .breadcrumb-right { margin-left: auto; display: flex; gap: .5rem; }
+        /* リンク風 */
+    .link-usage {
+      color: #0366d6;
+      text-decoration: underline;
+      cursor: pointer;
+      font-size: 0.95rem;
+      padding: 0;
+      border: none;
+      background: none;
+    }
+    .link-usage:hover {
+      text-decoration: none;
+      color: #024ea2;
+    }
+    .mtime{ color:#666; font-size:.9em; margin-right:.5rem; }
+    /* 2カラム本体 */
+    .main {
+      display: flex;
+      height: calc(100vh - var(--bar-h));
+    }
+    #file-list { width: 40%; border-right: 1px solid #ccc; padding: 1em; overflow: auto; }
+    #preview   { width: 60%; padding: 1em; white-space: pre-wrap; overflow: auto; }
+
+    .file-entry { display: flex; justify-content: space-between; gap: .75rem; margin: .5em 0; }
+    .file-name { cursor: pointer; color: #0366d6; }
+    .btn       { padding: .35rem .6rem; border: 1px solid #ccc; background: #fff; cursor: pointer; }
+    .btn:hover { background: #f5f5f5; }
+    
+
+    /* モーダル */
+    .modal-backdrop{
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.45);
+      display: none; align-items: center; justify-content: center;
+      z-index: 1001;
+    }
+    .modal{
+      width: min(900px, 92vw); max-height: 86vh; overflow: auto;
+      background: #fff; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.25);
+    }
+    .modal-header{
+      display:flex; align-items:center; gap:1rem;
+      padding:.75rem 1rem; border-bottom:1px solid #eee;
+    }
+    .modal-header h3{ margin:0; font-size:1rem; }
+    .modal-body{
+      padding: 1rem 1.25rem;
+    }
+    .modal-close{
+      margin-left:auto; border:1px solid #ccc; background:#fff; cursor:pointer;
+      padding:.25rem .5rem; border-radius:6px;
+    }
+
+    /* READMEの基本装飾 */
+    .md-body h1,.md-body h2,.md-body h3{ margin-top:1.2em; }
+    .md-body pre{ background:#f6f8fa; padding:.75rem; overflow:auto; border-radius:6px; }
+    .md-body code{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .md-body table{ border-collapse: collapse; }
+    .md-body table th, .md-body table td{ border:1px solid #ddd; padding:.35rem .5rem; }
   </style>
 </head>
 <body>
 
-  <div id="file-list">
+  <!-- パンくず -->
+  <nav class="breadcrumb-bar">
+    <a href="{{ url_for('browse') }}">files</a>
+    {% for c in breadcrumbs %}
+      <span class="breadcrumb-sep">/</span>
+      <a href="{{ url_for('browse', subpath=c.path) }}">{{ c.name }}</a>
+    {% endfor %}
 
-    {% if parent_path %}
-    <div><a href="{{ url_for('browse', subpath=parent_path) }}">⬅ 戻る</a></div>
-    {% endif %}
+    <div class="breadcrumb-right">
+      <a href="javascript:void(0)" class="link-usage" onclick="openReadme()">使用方法</a>
+      {% if subpath %}
+        <a class="btn" href="/download-folder/{{ subpath }}">このフォルダをZIP</a>
+        <a class="btn" href="{{ url_for('browse', subpath=parent_path) }}">⬅ 上へ</a>
+      {% endif %}
+    </div>
+  </nav>
 
-    {% if subpath %}
-      <div style="margin: 1em 0;">
-        <a href="/download-folder/{{ subpath }}">
-          <button>フォルダZIPでダウンロード</button>
-        </a>
-      </div>
-    {% endif %}
-
-    {% for entry in entries %}
-      <div class="file-entry">
+  <div class="main">
+    <div id="file-list">
+      {% for entry in entries %}
+    <div class="file-entry">
+      <div>
         {% if entry.type == 'file' %}
           <span class="file-name" onclick="previewFile('{{ entry.path }}')">📄 {{ entry.name }}</span>
-          <a href="/download/{{ entry.path }}" download>Download</a>
-        {% elif entry.type == 'folder' %}
+        {% else %}
           <span><a href="{{ url_for('browse', subpath=entry.path) }}">📁 {{ entry.name }}/</a></span>
-          <a href="/download-folder/{{ entry.path }}">ZIP</a>
         {% endif %}
+        <span style="color:#666; margin-left:0.5em;">({{ entry.size }})</span>
       </div>
-    {% endfor %}
+      <span>
+        <!-- ここが追加 -->
+        <span class="mtime">{{ entry.mtime }}</span>
+
+        {% if entry.type == 'file' %}
+          <a class="btn" href="/download/{{ entry.path }}" download>保存</a>
+          <button class="btn" onclick="deletePath('{{ entry.path }}', false)">削除</button>
+        {% else %}
+          <a class="btn" href="/download-folder/{{ entry.path }}">ZIP</a>
+          <button class="btn" onclick="deletePath('{{ entry.path }}', true)">削除</button>
+        {% endif %}
+      </span>
+    </div>
+      {% endfor %}
+    </div>
+
+    <div id="preview">ファイルの表示</div>
   </div>
+
+  <!-- ドロップオーバーレイ -->
   <div id="drop-overlay"
      style="position: fixed; top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.4); color: white;
             display: none; align-items: center; justify-content: center;
             font-size: 2em; z-index: 1000;">
-  🔽 ドロップでアップロード
+    🔽 ドロップでアップロード
   </div>
-  
 
-
-  <div id="preview">ファイルの表示</div>
+  <!-- README モーダル -->
+  <div id="readme-backdrop" class="modal-backdrop" onclick="closeReadme(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 id="readme-title">README</h3>
+        <button class="modal-close" onclick="closeReadme()">✕</button>
+      </div>
+      <div id="readme-body" class="modal-body md-body">
+        読み込み中…
+      </div>
+    </div>
+  </div>
 </body>
 </html>
