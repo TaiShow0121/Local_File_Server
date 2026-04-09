@@ -1,5 +1,5 @@
 /* =============================================================
-   Local File Server — script.js (all features)
+   Local File Server — script.js (modernized)
    ============================================================= */
 
 /* ========= Theme (Dark Mode) ========= */
@@ -8,18 +8,21 @@ function toggleTheme() {
   const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
   html.setAttribute('data-theme', next);
   localStorage.setItem('theme', next);
-  document.getElementById('theme-toggle').textContent = next === 'dark' ? '☀️' : '🌙';
+  document.getElementById('theme-toggle').innerHTML =
+    `<span class="icon">${next === 'dark' ? '\u2600\uFE0F' : '\uD83C\uDF19'}</span>`;
 }
 
 function applyStoredTheme() {
   const t = localStorage.getItem('theme') || 'light';
   document.documentElement.setAttribute('data-theme', t);
   const btn = document.getElementById('theme-toggle');
-  if (btn) btn.textContent = t === 'dark' ? '☀️' : '🌙';
+  if (btn) btn.innerHTML = `<span class="icon">${t === 'dark' ? '\u2600\uFE0F' : '\uD83C\uDF19'}</span>`;
 }
 
 /* ========= View Toggle (List / Grid) ========= */
 let currentView = localStorage.getItem('viewMode') || 'list';
+const INTERNAL_ENTRY_MIME = 'application/x-local-file-server-entry';
+let activeDraggedEntry = null;
 
 function toggleView() {
   currentView = currentView === 'list' ? 'grid' : 'list';
@@ -33,10 +36,10 @@ function applyView() {
   if (!fl) return;
   if (currentView === 'grid') {
     fl.classList.add('grid-view');
-    if (btn) btn.textContent = '📋リスト';
+    if (btn) btn.innerHTML = '\uD83D\uDCCB リスト';
   } else {
     fl.classList.remove('grid-view');
-    if (btn) btn.textContent = '🔲グリッド';
+    if (btn) btn.innerHTML = '\uD83D\uDD32 グリッド';
   }
 }
 
@@ -87,6 +90,121 @@ function parseSizeStr(s) {
   return v * (mult[u] || 1);
 }
 
+function isInteractiveTarget(el) {
+  if (!el) return false;
+  if (el.closest('.file-name')) return false;
+  return !!el.closest('input, button, a, label, textarea, select');
+}
+
+function clearMoveDropHighlights(exceptEl = null) {
+  document.querySelectorAll('.file-entry.drop-target, .folder-drop-target.drag-hover').forEach(el => {
+    if (el !== exceptEl) {
+      el.classList.remove('drop-target');
+      el.classList.remove('drag-hover');
+    }
+  });
+}
+
+function canDropMovedEntry(targetPath) {
+  if (!activeDraggedEntry || targetPath == null) return false;
+  return activeDraggedEntry.path !== targetPath;
+}
+
+async function moveEntry(sourcePath, targetDir) {
+  try {
+    const res = await fetch('/move', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourcePath, targetDir })
+    });
+    const j = await res.json();
+    if (!res.ok || !j.ok) {
+      showToast('移動失敗: ' + (j.error || ''), 'error');
+      return;
+    }
+    showToast('移動しました', 'success');
+    setTimeout(() => location.reload(), 450);
+  } catch (e) {
+    console.error(e);
+    showToast('通信エラー', 'error');
+  }
+}
+
+function bindMoveDropTarget(el, getTargetPath, hoverClass) {
+  if (!el) return;
+
+  const showHover = (e) => {
+    const targetPath = getTargetPath();
+    if (!canDropMovedEntry(targetPath)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    clearMoveDropHighlights(el);
+    el.classList.add(hoverClass);
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  };
+
+  el.addEventListener('dragenter', showHover);
+  el.addEventListener('dragover', showHover);
+  el.addEventListener('drop', async (e) => {
+    const targetPath = getTargetPath();
+    if (!canDropMovedEntry(targetPath)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    clearMoveDropHighlights();
+    await moveEntry(activeDraggedEntry.path, targetPath);
+  });
+}
+
+function initMoveDragAndDrop() {
+  document.querySelectorAll('.file-entry').forEach(entryEl => {
+    const path = entryEl.dataset.path || '';
+    const type = entryEl.dataset.type || '';
+    if (!path) return;
+
+    entryEl.draggable = true;
+    entryEl.addEventListener('dragstart', (e) => {
+      if (isInteractiveTarget(e.target)) {
+        e.preventDefault();
+        return;
+      }
+
+      activeDraggedEntry = { path, type };
+      clearMoveDropHighlights();
+      entryEl.classList.add('dragging');
+
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', path);
+        try {
+          e.dataTransfer.setData(INTERNAL_ENTRY_MIME, path);
+        } catch (_) {
+          // Some browsers only allow a limited set of drag payloads.
+        }
+      }
+    });
+
+    entryEl.addEventListener('dragend', () => {
+      entryEl.classList.remove('dragging');
+      clearMoveDropHighlights();
+      activeDraggedEntry = null;
+    });
+
+    if (type === 'folder') {
+      bindMoveDropTarget(entryEl, () => entryEl.dataset.path, 'drop-target');
+    }
+  });
+
+  document.querySelectorAll('.folder-drop-target').forEach(targetEl => {
+    bindMoveDropTarget(targetEl, () => targetEl.dataset.dropPath ?? '', 'drag-hover');
+  });
+}
+
+function isExternalFileDrag(e) {
+  if (activeDraggedEntry) return false;
+  const types = [...(e.dataTransfer?.types || [])];
+  return types.includes('Files');
+}
+
 /* ========= Multi-select & Batch ========= */
 function updateBatchBar() {
   const cbs = document.querySelectorAll('.entry-cb:checked');
@@ -131,9 +249,10 @@ async function batchDelete() {
       body: JSON.stringify({ paths })
     });
     const j = await res.json();
-    if (!j.ok) { alert('削除エラー: ' + (j.error || '')); return; }
-    location.reload();
-  } catch (e) { console.error(e); alert('通信エラー'); }
+    if (!j.ok) { showToast('削除エラー: ' + (j.error || ''), 'error'); return; }
+    showToast(`${paths.length}件を削除しました`, 'success');
+    setTimeout(() => location.reload(), 600);
+  } catch (e) { console.error(e); showToast('通信エラー', 'error'); }
 }
 
 async function batchDownload() {
@@ -145,14 +264,15 @@ async function batchDownload() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ paths })
     });
-    if (!res.ok) { alert('ダウンロードエラー'); return; }
+    if (!res.ok) { showToast('ダウンロードエラー', 'error'); return; }
     const blob = await res.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'selected.zip';
     a.click();
     URL.revokeObjectURL(a.href);
-  } catch (e) { console.error(e); alert('通信エラー'); }
+    showToast('ダウンロード開始', 'success');
+  } catch (e) { console.error(e); showToast('通信エラー', 'error'); }
 }
 
 /* ========= Delete single ========= */
@@ -166,9 +286,10 @@ async function deletePath(path, isDir) {
       body: JSON.stringify({ subpath: path })
     });
     const j = await res.json();
-    if (!res.ok || !j.ok) { alert('削除失敗: ' + (j.error || '')); return; }
-    location.reload();
-  } catch (e) { console.error(e); alert('通信エラー'); }
+    if (!res.ok || !j.ok) { showToast('削除失敗: ' + (j.error || ''), 'error'); return; }
+    showToast('削除しました', 'success');
+    setTimeout(() => location.reload(), 600);
+  } catch (e) { console.error(e); showToast('通信エラー', 'error'); }
 }
 
 /* ========= Rename ========= */
@@ -182,9 +303,10 @@ function openRename(path, oldName) {
         body: JSON.stringify({ oldPath: path, newName })
       });
       const j = await res.json();
-      if (!j.ok) { alert('リネーム失敗: ' + (j.error || '')); return; }
-      location.reload();
-    } catch (e) { console.error(e); alert('通信エラー'); }
+      if (!j.ok) { showToast('リネーム失敗: ' + (j.error || ''), 'error'); return; }
+      showToast('リネームしました', 'success');
+      setTimeout(() => location.reload(), 600);
+    } catch (e) { console.error(e); showToast('通信エラー', 'error'); }
   });
 }
 
@@ -199,9 +321,10 @@ function openMkdir() {
         body: JSON.stringify({ parent: window.__subpath || '', name })
       });
       const j = await res.json();
-      if (!j.ok) { alert('作成失敗: ' + (j.error || '')); return; }
-      location.reload();
-    } catch (e) { console.error(e); alert('通信エラー'); }
+      if (!j.ok) { showToast('作成失敗: ' + (j.error || ''), 'error'); return; }
+      showToast('フォルダを作成しました', 'success');
+      setTimeout(() => location.reload(), 600);
+    } catch (e) { console.error(e); showToast('通信エラー', 'error'); }
   });
 }
 
@@ -220,7 +343,6 @@ function showInputModal(title, label, defaultVal, onOk) {
     okBtn.removeEventListener('click', handler);
     onOk(inp.value.trim());
   };
-  // clone to remove old listeners
   const newBtn = okBtn.cloneNode(true);
   okBtn.parentNode.replaceChild(newBtn, okBtn);
   newBtn.addEventListener('click', handler);
@@ -230,10 +352,59 @@ function closeModal(id) {
   document.getElementById(id).style.display = 'none';
 }
 
+/* ========= Toast Notification ========= */
+function showToast(message, type = 'info', duration = 3000) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  const icons = { success: '\u2705', error: '\u274C', info: '\u2139\uFE0F' };
+  toast.innerHTML = `<span>${icons[type] || ''}</span> ${escapeHtml(message)}`;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.animation = 'toastOut .3s cubic-bezier(.4,0,.2,1) forwards';
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
+}
+
+/* ========= Context Menu ========= */
+function showContextMenu(e, path, name, type) {
+  e.preventDefault();
+  const menu = document.getElementById('context-menu');
+  const isFile = type === 'file';
+
+  let items = '';
+  if (isFile) {
+    items += `<div class="context-menu-item" onclick="previewFile('${path}'); addRecent('${path}','${name}'); hideContextMenu();">\uD83D\uDC41 プレビュー</div>`;
+    items += `<div class="context-menu-item" onclick="window.location.href='/download/${path}'; hideContextMenu();">\uD83D\uDCBE ダウンロード</div>`;
+  } else {
+    items += `<div class="context-menu-item" onclick="window.location.href='/browse/${path}'; hideContextMenu();">\uD83D\uDCC2 開く</div>`;
+    items += `<div class="context-menu-item" onclick="window.location.href='/download-folder/${path}'; hideContextMenu();">\uD83D\uDCE6 ZIPダウンロード</div>`;
+  }
+  items += `<div class="context-menu-item" onclick="openRename('${path}','${name}'); hideContextMenu();">\u270F\uFE0F リネーム</div>`;
+  items += `<div class="context-menu-item" onclick="toggleFav('${path}','${name}','${type}'); hideContextMenu();">\u2B50 お気に入り</div>`;
+  items += `<div class="context-menu-sep"></div>`;
+  items += `<div class="context-menu-item danger" onclick="deletePath('${path}', ${!isFile}); hideContextMenu();">\uD83D\uDDD1 削除</div>`;
+
+  menu.innerHTML = items;
+  menu.style.display = 'block';
+
+  // Position
+  const mx = e.clientX, my = e.clientY;
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  menu.style.left = (mx + mw > window.innerWidth ? mx - mw : mx) + 'px';
+  menu.style.top = (my + mh > window.innerHeight ? my - mh : my) + 'px';
+}
+
+function hideContextMenu() {
+  document.getElementById('context-menu').style.display = 'none';
+}
+
 /* ========= Preview ========= */
 function previewFile(path) {
   const el = document.getElementById('preview');
-  const ext = (path.split('.').pop() || '').toLowerCase();
+  const fileName = (path.split('/').pop() || path).toLowerCase();
+  const dotIndex = fileName.lastIndexOf('.');
+  const ext = dotIndex >= 0 ? fileName.slice(dotIndex + 1) : '';
 
   const imgExt = ['png','jpg','jpeg','gif','webp','bmp','svg'];
   const vidExt = ['mp4','webm','ogv','ogg'];
@@ -241,20 +412,92 @@ function previewFile(path) {
   const pdfExt = ['pdf'];
   const mdExt  = ['md','markdown','mdown','mkd','mkdown'];
   const htmlExt= ['html','htm'];
+  const xlsExt = ['xlsx','xls','xlsm','xlsb','ods'];
+  const docExt = ['docx'];
+  const pptExt = ['pptx'];
+  const zipExt = ['zip','jar','war','apk'];
+  const archiveExt = ['tar','gz','tgz','bz2','xz','rar','7z','lz','zst'];
+  const blockedBinaryExt = ['exe','msi','dll','bin','iso','img','class','o','obj','so','dylib'];
   const textExt= ['txt','py','js','ts','tsx','jsx','css','json','xml','csv','yaml','yml',
                    'toml','ini','cfg','bat','sh','log','java','c','cpp','h','rs','go',
-                   'rb','php','sql','r','m','vue','svelte'];
+                   'rb','php','sql','r','m','vue','svelte','cs','csproj','sln','razor',
+                   'cshtml','ps1','env','properties','conf','service','gradle'];
+  const textLikeNames = ['dockerfile','makefile','readme','license','.env'];
+  const maxTextPreviewBytes = 2 * 1024 * 1024;
+
+  // Highlight selected entry
+  document.querySelectorAll('.file-entry').forEach(e => e.classList.remove('selected'));
+  const entry = document.querySelector(`.file-entry[data-path="${CSS.escape(path)}"]`);
+  if (entry) entry.classList.add('selected');
+  const sizeBytes = Number(entry?.dataset.sizeBytes || 0);
+  const isKnownText = textExt.includes(ext) || textLikeNames.includes(fileName);
+
+  const showPreviewBlocked = (message) => {
+    el.classList.remove('md-body');
+    el.innerHTML = `<div style="padding:2rem;text-align:center;">
+      <div style="font-size:3.5rem;margin-bottom:1rem;">\uD83D\uDCC4</div>
+      <p style="font-size:1rem;font-weight:600;margin-bottom:.5rem;">${escapeHtml(path.split('/').pop())}</p>
+      <p style="color:var(--text-secondary);margin-bottom:1rem;font-size:.88rem;">${escapeHtml(message)}</p>
+      <a class="btn btn-accent" href="/download/${encodeURIComponent(path)}" download>\uD83D\uDCBE ダウンロード</a>
+    </div>`;
+  };
+
+  if (blockedBinaryExt.includes(ext)) {
+    showPreviewBlocked('実行ファイルやバイナリはプレビューしません');
+    return;
+  }
+
+  if (!ext && !isKnownText && sizeBytes > 0) {
+    showPreviewBlocked('この形式はプレビュー対象外です');
+    return;
+  }
+
+  // ZIP archives - show folder structure
+  if (zipExt.includes(ext)) {
+    previewZip(path, el);
+    return;
+  }
+
+  // Other archives - download only
+  if (archiveExt.includes(ext)) {
+    el.classList.remove('md-body');
+    el.innerHTML = `<div style="padding:2rem;text-align:center;">
+      <div style="font-size:4rem;margin-bottom:1rem;">\uD83D\uDDDC</div>
+      <p style="font-size:1rem;font-weight:600;margin-bottom:.5rem;">${escapeHtml(path.split('/').pop())}</p>
+      <p style="color:var(--text-secondary);margin-bottom:1rem;font-size:.88rem;">この形式のプレビューには対応していません</p>
+      <a class="btn btn-accent" href="/download/${encodeURIComponent(path)}" download>\uD83D\uDCBE ダウンロード</a>
+    </div>`;
+    return;
+  }
+
+  // Excel
+  if (xlsExt.includes(ext)) {
+    previewExcel(path, el);
+    return;
+  }
+
+  // Word
+  if (docExt.includes(ext)) {
+    previewWord(path, el);
+    return;
+  }
+
+  // PowerPoint (basic)
+  if (pptExt.includes(ext)) {
+    previewPptx(path, el);
+    return;
+  }
 
   // Markdown
   if (mdExt.includes(ext)) {
-    el.innerHTML = '読み込み中…';
+    el.innerHTML = '<div style="padding:2rem;text-align:center;color:var(--text-muted);">読み込み中…</div>';
     fetch(`/render-md/${encodeURIComponent(path)}`)
       .then(r => r.json())
       .then(j => {
         if (!j.ok) throw new Error(j.error || 'failed');
         el.classList.add('md-body');
         el.innerHTML = `<div style="margin-bottom:.5rem;">
-          <button class="btn btn-sm" onclick="editFile('${path}')">✏️ 編集</button>
+          <button class="btn btn-sm" onclick="editFile('${path}')">\u270F\uFE0F 編集</button>
         </div>` + j.html;
       })
       .catch(() => { el.textContent = 'Markdownの表示に失敗しました'; });
@@ -268,13 +511,13 @@ function previewFile(path) {
       <div style="display:flex;gap:.5rem;margin-bottom:.5rem;">
         <button class="btn btn-sm" id="tab-live">見た目</button>
         <button class="btn btn-sm" id="tab-code">コード</button>
-        <button class="btn btn-sm" onclick="editFile('${path}')">✏️ 編集</button>
+        <button class="btn btn-sm" onclick="editFile('${path}')">\u270F\uFE0F 編集</button>
       </div>
       <div id="preview-pane"></div>`;
     const pane = document.getElementById('preview-pane');
     const showLive = () => {
       pane.innerHTML = `<iframe src="/raw/${encodeURIComponent(path)}"
-        style="width:100%;height:75vh;border:1px solid var(--border);border-radius:6px;"
+        style="width:100%;height:75vh;border:1px solid var(--border);border-radius:8px;"
         sandbox="allow-scripts allow-forms allow-popups"></iframe>`;
     };
     const showCode = () => {
@@ -282,7 +525,7 @@ function previewFile(path) {
       fetch(`/preview/${encodeURIComponent(path)}`)
         .then(r => r.json())
         .then(d => {
-          pane.innerHTML = `<pre style="background:var(--code-bg);padding:.75rem;overflow:auto;border-radius:6px;white-space:pre-wrap;">${escapeHtml(d.content||'')}</pre>`;
+          pane.innerHTML = `<pre style="background:var(--code-bg);padding:.75rem;overflow:auto;border-radius:8px;white-space:pre-wrap;">${escapeHtml(d.content||'')}</pre>`;
         })
         .catch(() => { pane.textContent = '読み込みエラー'; });
     };
@@ -295,42 +538,52 @@ function previewFile(path) {
   // Image
   if (imgExt.includes(ext)) {
     el.classList.remove('md-body');
-    el.innerHTML = `<img src="/raw/${encodeURIComponent(path)}" alt="" style="max-width:100%;height:auto;display:block;">`;
+    el.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;"><img src="/raw/${encodeURIComponent(path)}" alt="" style="max-width:100%;max-height:90vh;height:auto;display:block;border-radius:8px;box-shadow:var(--shadow);"></div>`;
     return;
   }
 
   // PDF
   if (pdfExt.includes(ext)) {
     el.classList.remove('md-body');
-    el.innerHTML = `<iframe src="/raw/${encodeURIComponent(path)}#view=FitH" style="width:100%;height:80vh;border:0;"></iframe>`;
+    el.innerHTML = `<iframe src="/raw/${encodeURIComponent(path)}#view=FitH" style="width:100%;height:calc(100% - 8px);border:0;border-radius:8px;"></iframe>`;
     return;
   }
 
   // Video
   if (vidExt.includes(ext)) {
     el.classList.remove('md-body');
-    el.innerHTML = `<video src="/raw/${encodeURIComponent(path)}" controls style="max-width:100%;height:auto;display:block;"></video>`;
+    el.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;"><video src="/raw/${encodeURIComponent(path)}" controls style="max-width:100%;max-height:90vh;border-radius:8px;box-shadow:var(--shadow);"></video></div>`;
     return;
   }
 
   // Audio
   if (audExt.includes(ext)) {
     el.classList.remove('md-body');
-    el.innerHTML = `<audio src="/raw/${encodeURIComponent(path)}" controls style="width:100%;display:block;"></audio>`;
+    el.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;"><div style="text-align:center;"><div style="font-size:4rem;margin-bottom:1rem;">\uD83C\uDFB5</div><audio src="/raw/${encodeURIComponent(path)}" controls style="width:320px;display:block;"></audio></div></div>`;
+    return;
+  }
+
+  if (isKnownText && sizeBytes > maxTextPreviewBytes) {
+    showPreviewBlocked(`サイズが大きいためプレビューしません（${Math.round(sizeBytes / 1024 / 1024)}MB）`);
+    return;
+  }
+
+  if (!isKnownText) {
+    showPreviewBlocked('この形式はプレビュー対象外です');
     return;
   }
 
   // Text (with edit button)
   el.classList.remove('md-body');
-  el.innerHTML = '読み込み中…';
+  el.innerHTML = '<div style="padding:2rem;text-align:center;color:var(--text-muted);">読み込み中…</div>';
   fetch(`/preview/${encodeURIComponent(path)}`)
     .then(r => r.json())
     .then(data => {
       const isTextEditable = textExt.includes(ext) || mdExt.includes(ext);
       const editBtn = isTextEditable
-        ? `<div style="margin-bottom:.5rem;"><button class="btn btn-sm" onclick="editFile('${path}')">✏️ 編集</button></div>`
+        ? `<div style="margin-bottom:.5rem;"><button class="btn btn-sm" onclick="editFile('${path}')">\u270F\uFE0F 編集</button></div>`
         : '';
-      el.innerHTML = editBtn + `<pre style="background:var(--code-bg);padding:.75rem;overflow:auto;border-radius:6px;white-space:pre-wrap;margin:0;">${escapeHtml(data.content||'')}</pre>`;
+      el.innerHTML = editBtn + `<pre style="background:var(--code-bg);padding:1rem;overflow:auto;border-radius:8px;white-space:pre-wrap;margin:0;border:1px solid var(--border);font-size:.88rem;line-height:1.6;">${escapeHtml(data.content||'')}</pre>`;
     })
     .catch(() => { el.textContent = '読み込みエラー'; });
 }
@@ -339,31 +592,29 @@ function previewFile(path) {
 function editFile(path) {
   const el = document.getElementById('preview');
   el.classList.remove('md-body');
-  el.innerHTML = '読み込み中…';
+  el.innerHTML = '<div style="padding:2rem;text-align:center;color:var(--text-muted);">読み込み中…</div>';
 
   fetch(`/preview/${encodeURIComponent(path)}`)
     .then(r => r.json())
     .then(data => {
       el.innerHTML = `
         <div style="display:flex;gap:.5rem;margin-bottom:.5rem;align-items:center;">
-          <button class="btn btn-sm btn-accent" id="save-btn" onclick="saveFile('${path}')">💾 保存</button>
+          <button class="btn btn-sm btn-accent" id="save-btn" onclick="saveFile('${path}')">\uD83D\uDCBE 保存</button>
           <button class="btn btn-sm" onclick="previewFile('${path}')">キャンセル</button>
           <span id="save-status" style="font-size:.85rem;color:var(--text-secondary);"></span>
         </div>
         <textarea id="edit-area" style="width:100%;height:calc(100% - 50px);min-height:400px;
           font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
           font-size:.9rem;background:var(--code-bg);color:var(--text);
-          border:1px solid var(--border);border-radius:6px;padding:.75rem;
-          resize:vertical;tab-size:2;">${escapeHtml(data.content || '')}</textarea>`;
+          border:1px solid var(--border);border-radius:8px;padding:.75rem;
+          resize:vertical;tab-size:2;line-height:1.6;">${escapeHtml(data.content || '')}</textarea>`;
 
-      // Ctrl+S / Cmd+S to save
       const area = document.getElementById('edit-area');
       area.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 's') {
           e.preventDefault();
           saveFile(path);
         }
-        // Tab support
         if (e.key === 'Tab') {
           e.preventDefault();
           const s = area.selectionStart, end = area.selectionEnd;
@@ -388,9 +639,8 @@ async function saveFile(path) {
     });
     const j = await res.json();
     if (!j.ok) { status.textContent = '保存失敗: ' + (j.error || ''); return; }
-    status.textContent = '✓ 保存しました';
-    status.style.color = 'var(--success)';
-    setTimeout(() => { status.textContent = ''; status.style.color = ''; }, 2000);
+    status.textContent = '';
+    showToast('保存しました', 'success');
   } catch (e) {
     console.error(e);
     status.textContent = '通信エラー';
@@ -421,7 +671,7 @@ async function doSearch() {
         <div class="search-result-path" onclick="${r.type === 'file'
           ? `previewFile('${r.path}'); addRecent('${r.path}','${r.name}')`
           : `location.href='/browse/${r.path}'`}">
-          ${r.type === 'folder' ? '📁' : '📄'} ${escapeHtml(r.path)}
+          ${r.type === 'folder' ? '\uD83D\uDCC1' : '\uD83D\uDCC4'} ${escapeHtml(r.path)}
           ${r.nameMatch ? '<span class="search-badge">名前</span>' : ''}
           ${r.contentMatch ? '<span class="search-badge">内容</span>' : ''}
         </div>
@@ -462,6 +712,7 @@ async function toggleFav(path, name, type) {
     if (j.ok) _favsCache = j.favs || [];
   } catch (e) { console.error('toggleFav error', e); }
   refreshStars();
+  showToast(isFav ? 'お気に入りから削除' : 'お気に入りに追加', 'info', 1500);
 }
 
 function refreshStars() {
@@ -469,10 +720,10 @@ function refreshStars() {
   document.querySelectorAll('.star-btn').forEach(btn => {
     const p = btn.dataset.path;
     if (favPaths.has(p)) {
-      btn.textContent = '★';
+      btn.textContent = '\u2605';
       btn.classList.add('active');
     } else {
-      btn.textContent = '☆';
+      btn.textContent = '\u2606';
       btn.classList.remove('active');
     }
   });
@@ -482,18 +733,18 @@ async function showFavorites() {
   await fetchFavs();
   const panel = document.getElementById('side-panel');
   const body = document.getElementById('side-panel-body');
-  document.getElementById('side-panel-title').textContent = '⭐ お気に入り';
+  document.getElementById('side-panel-title').textContent = '\u2B50 お気に入り';
   panel.classList.add('active');
 
   if (!_favsCache.length) {
-    body.innerHTML = '<div style="padding:1rem;color:var(--text-secondary);">お気に入りがありません<br>☆をクリックして追加</div>';
+    body.innerHTML = '<div style="padding:1rem;color:var(--text-secondary);">お気に入りがありません<br>\u2606をクリックして追加</div>';
     return;
   }
   body.innerHTML = _favsCache.map(f => `
     <div class="side-panel-item" onclick="${f.type === 'file'
       ? `previewFile('${f.path}'); addRecent('${f.path}','${f.name}')`
       : `location.href='/browse/${f.path}'`}">
-      ${f.type === 'folder' ? '📁' : '📄'} ${escapeHtml(f.name)}
+      ${f.type === 'folder' ? '\uD83D\uDCC1' : '\uD83D\uDCC4'} ${escapeHtml(f.name)}
     </div>
   `).join('');
 }
@@ -515,7 +766,7 @@ function showRecent() {
   const recent = getRecent();
   const panel = document.getElementById('side-panel');
   const body = document.getElementById('side-panel-body');
-  document.getElementById('side-panel-title').textContent = '🕐 最近使ったファイル';
+  document.getElementById('side-panel-title').textContent = '\uD83D\uDD50 最近使ったファイル';
   panel.classList.add('active');
 
   if (!recent.length) {
@@ -526,7 +777,7 @@ function showRecent() {
     const ago = timeAgo(r.time);
     return `
       <div class="side-panel-item" onclick="previewFile('${r.path}')">
-        📄 ${escapeHtml(r.name)}
+        \uD83D\uDCC4 ${escapeHtml(r.name)}
         <span style="margin-left:auto;font-size:.75rem;color:var(--text-secondary);">${ago}</span>
       </div>`;
   }).join('');
@@ -576,17 +827,12 @@ async function openQR() {
   }
 }
 
-// Minimal QR code generator (for simple URLs)
 function drawQR(canvas, text) {
-  // Use a simple approach: render via an SVG-based QR
-  // We'll create a basic QR code using a minimal encoder
   const ctx = canvas.getContext('2d');
   const size = 200;
   canvas.width = size;
   canvas.height = size;
 
-  // Simple QR fallback: show URL as text if no library
-  // For a proper QR, we inline a minimal QR encoder
   const modules = generateQRModules(text);
   if (!modules) {
     ctx.fillStyle = '#fff';
@@ -611,15 +857,9 @@ function drawQR(canvas, text) {
   }
 }
 
-// Minimal QR Code encoder (Version 1-4, alphanumeric/byte, L error correction)
-// This is a simplified inline QR encoder for short URLs
 function generateQRModules(text) {
-  // For simplicity, we'll create a basic visual pattern
-  // A full QR library would be better, but this avoids external deps
   try {
-    const data = encodeURIComponent(text);
     const len = text.length;
-    // Determine version (1=21x21, 2=25x25, 3=29x29, 4=33x33)
     let version, size;
     if (len <= 17) { version = 1; size = 21; }
     else if (len <= 32) { version = 2; size = 25; }
@@ -628,14 +868,13 @@ function generateQRModules(text) {
 
     const modules = Array.from({ length: size }, () => Array(size).fill(false));
 
-    // Add finder patterns
     const addFinder = (r, c) => {
       for (let dr = -1; dr <= 7; dr++) {
         for (let dc = -1; dc <= 7; dc++) {
           const rr = r + dr, cc = c + dc;
           if (rr < 0 || rr >= size || cc < 0 || cc >= size) continue;
           if (dr === -1 || dr === 7 || dc === -1 || dc === 7) {
-            modules[rr][cc] = false; // separator
+            modules[rr][cc] = false;
           } else if (dr === 0 || dr === 6 || dc === 0 || dc === 6) {
             modules[rr][cc] = true;
           } else if (dr >= 2 && dr <= 4 && dc >= 2 && dc <= 4) {
@@ -650,31 +889,19 @@ function generateQRModules(text) {
     addFinder(0, size - 7);
     addFinder(size - 7, 0);
 
-    // Timing patterns
     for (let i = 8; i < size - 8; i++) {
       modules[6][i] = i % 2 === 0;
       modules[i][6] = i % 2 === 0;
     }
 
-    // Fill data area with a hash of the text (visual approximation)
-    let hash = 0;
-    for (let i = 0; i < text.length; i++) {
-      hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
-    }
-    let seed = Math.abs(hash);
-    const pseudoRand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed; };
-
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
-        // Skip finder patterns area and timing
         if ((r < 9 && c < 9) || (r < 9 && c >= size - 8) || (r >= size - 8 && c < 9)) continue;
         if (r === 6 || c === 6) continue;
-        // Encode data bits from actual text bytes
         const byteIdx = Math.floor((r * size + c) / 8) % text.length;
         const bitIdx = (r * size + c) % 8;
         const byte = text.charCodeAt(byteIdx);
         modules[r][c] = ((byte >> (7 - bitIdx)) & 1) === 1;
-        // XOR with mask pattern (checkerboard)
         if ((r + c) % 2 === 0) modules[r][c] = !modules[r][c];
       }
     }
@@ -685,34 +912,440 @@ function generateQRModules(text) {
   }
 }
 
+/* ========= ZIP Archive Preview ========= */
+async function previewZip(path, el) {
+  el.classList.remove('md-body');
+  el.innerHTML = '<div style="padding:2rem;text-align:center;color:var(--text-muted);">\uD83D\uDDDC ZIPファイルを読み込み中…</div>';
+
+  try {
+    const res = await fetch(`/raw/${encodeURIComponent(path)}`);
+    if (!res.ok) throw new Error('fetch failed');
+    const buf = await res.arrayBuffer();
+    const zip = await JSZip.loadAsync(buf);
+
+    // Build tree structure from flat file list
+    const tree = {};
+    let totalFiles = 0;
+    let totalSize = 0;
+
+    zip.forEach((relativePath, zipEntry) => {
+      const parts = relativePath.split('/').filter(p => p);
+      let current = tree;
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        if (i === parts.length - 1 && !zipEntry.dir) {
+          // File
+          if (!current.__files__) current.__files__ = [];
+          current.__files__.push({
+            name: part,
+            size: zipEntry._data ? (zipEntry._data.uncompressedSize || 0) : 0,
+            date: zipEntry.date
+          });
+          totalFiles++;
+          totalSize += zipEntry._data ? (zipEntry._data.uncompressedSize || 0) : 0;
+        } else {
+          // Directory
+          if (!current[part]) current[part] = {};
+          current = current[part];
+        }
+      }
+    });
+
+    const treeHtml = buildArchiveTreeHtml(tree, 0);
+    const fileName = path.split('/').pop();
+
+    el.innerHTML = `
+      <div style="margin-bottom:.5rem;display:flex;gap:.5rem;align-items:center;">
+        <a class="btn btn-sm" href="/download/${encodeURIComponent(path)}" download>\uD83D\uDCBE ダウンロード</a>
+        <span style="font-size:.82rem;color:var(--text-muted);">${escapeHtml(fileName)}</span>
+      </div>
+      <div class="archive-info">
+        <span>\uD83D\uDCC4 ${totalFiles} ファイル</span>
+        <span>\uD83D\uDCBE ${humanSize(totalSize)}</span>
+        <span>\uD83D\uDCC1 ${Object.keys(tree).filter(k => k !== '__files__').length} フォルダ</span>
+      </div>
+      <div class="archive-tree">${treeHtml}</div>`;
+  } catch (e) {
+    console.error('ZIP preview error:', e);
+    el.innerHTML = `<div style="padding:2rem;text-align:center;">
+      <p style="color:var(--danger);margin-bottom:.5rem;">ZIPプレビューに失敗しました</p>
+      <a class="btn btn-sm" href="/download/${encodeURIComponent(path)}" download>\uD83D\uDCBE ダウンロードして開く</a>
+    </div>`;
+  }
+}
+
+function buildArchiveTreeHtml(node, depth) {
+  let html = '';
+  // Folders first
+  const folders = Object.keys(node).filter(k => k !== '__files__').sort();
+  for (const folder of folders) {
+    const childCount = countTreeItems(node[folder]);
+    html += `<div class="archive-tree-folder">
+      <div class="archive-tree-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
+        <span class="arrow">\u25BC</span>
+        <span class="tree-icon">\uD83D\uDCC1</span>
+        <span class="tree-name">${escapeHtml(folder)}</span>
+        <span class="tree-size">${childCount}項目</span>
+      </div>
+      <div class="archive-tree-children">
+        ${buildArchiveTreeHtml(node[folder], depth + 1)}
+      </div>
+    </div>`;
+  }
+  // Files
+  const files = (node.__files__ || []).sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+  for (const file of files) {
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    const icon = getFileIcon(ext);
+    html += `<div class="archive-tree-item">
+      <span class="tree-icon">${icon}</span>
+      <span class="tree-name">${escapeHtml(file.name)}</span>
+      <span class="tree-size">${humanSize(file.size)}</span>
+    </div>`;
+  }
+  return html;
+}
+
+function countTreeItems(node) {
+  let count = (node.__files__ || []).length;
+  for (const k of Object.keys(node)) {
+    if (k !== '__files__') count += countTreeItems(node[k]) + 1;
+  }
+  return count;
+}
+
+function getFileIcon(ext) {
+  const icons = {
+    'png':'\uD83D\uDDBC','jpg':'\uD83D\uDDBC','jpeg':'\uD83D\uDDBC','gif':'\uD83D\uDDBC','webp':'\uD83D\uDDBC','svg':'\uD83D\uDDBC','bmp':'\uD83D\uDDBC',
+    'mp4':'\uD83C\uDFA5','webm':'\uD83C\uDFA5','mov':'\uD83C\uDFA5','avi':'\uD83C\uDFA5',
+    'mp3':'\uD83C\uDFB5','wav':'\uD83C\uDFB5','ogg':'\uD83C\uDFB5','m4a':'\uD83C\uDFB5',
+    'pdf':'\uD83D\uDCC4','doc':'\uD83D\uDCC4','docx':'\uD83D\uDCC4',
+    'xls':'\uD83D\uDCCA','xlsx':'\uD83D\uDCCA',
+    'ppt':'\uD83D\uDCCA','pptx':'\uD83D\uDCCA',
+    'zip':'\uD83D\uDDDC','rar':'\uD83D\uDDDC','7z':'\uD83D\uDDDC','tar':'\uD83D\uDDDC','gz':'\uD83D\uDDDC',
+    'py':'\uD83D\uDC0D','js':'\uD83D\uDFE8','ts':'\uD83D\uDD35','html':'\uD83C\uDF10','css':'\uD83C\uDFA8',
+    'json':'\uD83D\uDD27','xml':'\uD83D\uDD27','yaml':'\uD83D\uDD27','yml':'\uD83D\uDD27',
+    'exe':'\u2699\uFE0F','msi':'\u2699\uFE0F','bat':'\u2699\uFE0F','sh':'\u2699\uFE0F',
+  };
+  return icons[ext] || '\uD83D\uDCC4';
+}
+
+function humanSize(bytes) {
+  if (bytes === 0) return '0 B';
+  const units = ['B','KB','MB','GB','TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+}
+
+/* ========= Excel Preview ========= */
+async function previewExcel(path, el) {
+  el.classList.remove('md-body');
+  el.innerHTML = '<div style="padding:2rem;text-align:center;color:var(--text-muted);">\uD83D\uDCCA Excelファイルを読み込み中…</div>';
+
+  try {
+    const res = await fetch(`/raw/${encodeURIComponent(path)}`);
+    if (!res.ok) throw new Error('fetch failed');
+    const buf = await res.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array', cellStyles: true });
+
+    if (!wb.SheetNames.length) {
+      el.innerHTML = '<div style="padding:2rem;text-align:center;color:var(--text-muted);">シートが見つかりません</div>';
+      return;
+    }
+
+    // Build tabs
+    let tabsHtml = '<div class="excel-tabs">';
+    wb.SheetNames.forEach((name, i) => {
+      tabsHtml += `<div class="excel-tab${i === 0 ? ' active' : ''}" onclick="switchExcelSheet(this, ${i})">${escapeHtml(name)}</div>`;
+    });
+    tabsHtml += '</div>';
+
+    // Build sheets
+    let sheetsHtml = '';
+    wb.SheetNames.forEach((name, i) => {
+      const ws = wb.Sheets[name];
+      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+      const rowCount = range.e.r - range.s.r + 1;
+      const colCount = range.e.c - range.s.c + 1;
+
+      let tableHtml = '<table><thead><tr><th></th>';
+      // Column headers (A, B, C, ...)
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        tableHtml += `<th>${colToLetter(c)}</th>`;
+      }
+      tableHtml += '</tr></thead><tbody>';
+
+      // Merged cells
+      const merges = ws['!merges'] || [];
+
+      for (let r = range.s.r; r <= Math.min(range.e.r, range.s.r + 999); r++) {
+        tableHtml += `<tr><td class="row-num">${r + 1}</td>`;
+        for (let c = range.s.c; c <= range.e.c; c++) {
+          // Check if this cell is hidden by a merge
+          const skipMerge = merges.some(m =>
+            r >= m.s.r && r <= m.e.r && c >= m.s.c && c <= m.e.c &&
+            !(r === m.s.r && c === m.s.c)
+          );
+          if (skipMerge) continue;
+
+          // Check if this cell starts a merge
+          const merge = merges.find(m => m.s.r === r && m.s.c === c);
+          let attrs = '';
+          if (merge) {
+            const rs = merge.e.r - merge.s.r + 1;
+            const cs = merge.e.c - merge.s.c + 1;
+            if (rs > 1) attrs += ` rowspan="${rs}"`;
+            if (cs > 1) attrs += ` colspan="${cs}"`;
+          }
+
+          const addr = XLSX.utils.encode_cell({ r, c });
+          const cell = ws[addr];
+          let val = '';
+          if (cell) {
+            if (cell.w) val = cell.w;
+            else if (cell.v !== undefined) val = String(cell.v);
+          }
+          tableHtml += `<td${attrs}>${escapeHtml(val)}</td>`;
+        }
+        tableHtml += '</tr>';
+      }
+      tableHtml += '</tbody></table>';
+
+      const moreRows = rowCount > 1000 ? `<div style="padding:.5rem;color:var(--warning);font-size:.82rem;">※ 先頭1000行のみ表示 (全${rowCount}行)</div>` : '';
+
+      sheetsHtml += `<div class="excel-sheet" id="excel-sheet-${i}" style="${i > 0 ? 'display:none;' : ''}">
+        ${tableHtml}${moreRows}
+      </div>`;
+
+      // Info for first sheet
+      if (i === 0) {
+        sheetsHtml += `<div class="excel-info">
+          <span>\uD83D\uDCCA ${wb.SheetNames.length}シート</span>
+          <span>\uD83D\uDCC4 ${rowCount}行 × ${colCount}列</span>
+        </div>`;
+      }
+    });
+
+    el.innerHTML = `
+      <div style="margin-bottom:.5rem;display:flex;gap:.5rem;align-items:center;">
+        <a class="btn btn-sm" href="/download/${encodeURIComponent(path)}" download>\uD83D\uDCBE ダウンロード</a>
+        <span style="font-size:.82rem;color:var(--text-muted);">${escapeHtml(path.split('/').pop())}</span>
+      </div>
+      <div class="excel-preview">${tabsHtml}${sheetsHtml}</div>`;
+  } catch (e) {
+    console.error('Excel preview error:', e);
+    el.innerHTML = `<div style="padding:2rem;text-align:center;">
+      <p style="color:var(--danger);margin-bottom:.5rem;">Excelプレビューに失敗しました</p>
+      <a class="btn btn-sm" href="/download/${encodeURIComponent(path)}" download>\uD83D\uDCBE ダウンロードして開く</a>
+    </div>`;
+  }
+}
+
+function switchExcelSheet(tabEl, index) {
+  document.querySelectorAll('.excel-tab').forEach(t => t.classList.remove('active'));
+  tabEl.classList.add('active');
+  document.querySelectorAll('.excel-sheet').forEach(s => s.style.display = 'none');
+  const sheet = document.getElementById(`excel-sheet-${index}`);
+  if (sheet) sheet.style.display = '';
+}
+
+function colToLetter(c) {
+  let s = '';
+  c++;
+  while (c > 0) {
+    c--;
+    s = String.fromCharCode(65 + (c % 26)) + s;
+    c = Math.floor(c / 26);
+  }
+  return s;
+}
+
+/* ========= Word (docx) Preview ========= */
+async function previewWord(path, el) {
+  el.classList.remove('md-body');
+  el.innerHTML = '<div style="padding:2rem;text-align:center;color:var(--text-muted);">\uD83D\uDCC4 Wordファイルを読み込み中…</div>';
+
+  try {
+    const res = await fetch(`/raw/${encodeURIComponent(path)}`);
+    if (!res.ok) throw new Error('fetch failed');
+    const buf = await res.arrayBuffer();
+
+    const result = await mammoth.convertToHtml({ arrayBuffer: buf }, {
+      styleMap: [
+        "p[style-name='Heading 1'] => h1:fresh",
+        "p[style-name='Heading 2'] => h2:fresh",
+        "p[style-name='Heading 3'] => h3:fresh",
+      ]
+    });
+
+    el.innerHTML = `
+      <div style="margin-bottom:.5rem;display:flex;gap:.5rem;align-items:center;">
+        <a class="btn btn-sm" href="/download/${encodeURIComponent(path)}" download>\uD83D\uDCBE ダウンロード</a>
+        <span style="font-size:.82rem;color:var(--text-muted);">${escapeHtml(path.split('/').pop())}</span>
+        ${result.messages.length ? `<span style="font-size:.75rem;color:var(--warning);">\u26A0 ${result.messages.length}件の警告</span>` : ''}
+      </div>
+      <div class="docx-preview">${result.value}</div>`;
+  } catch (e) {
+    console.error('Word preview error:', e);
+    el.innerHTML = `<div style="padding:2rem;text-align:center;">
+      <p style="color:var(--danger);margin-bottom:.5rem;">Wordプレビューに失敗しました</p>
+      <a class="btn btn-sm" href="/download/${encodeURIComponent(path)}" download>\uD83D\uDCBE ダウンロードして開く</a>
+    </div>`;
+  }
+}
+
+/* ========= PowerPoint (pptx) Preview ========= */
+async function previewPptx(path, el) {
+  el.classList.remove('md-body');
+  el.innerHTML = '<div style="padding:2rem;text-align:center;color:var(--text-muted);">\uD83D\uDCCA PowerPointを読み込み中…</div>';
+
+  try {
+    const res = await fetch(`/raw/${encodeURIComponent(path)}`);
+    if (!res.ok) throw new Error('fetch failed');
+    const buf = await res.arrayBuffer();
+
+    // Use JSZip (bundled in SheetJS) to extract slide text
+    const zip = await new Promise((resolve, reject) => {
+      try {
+        // SheetJS includes a zip reader we can leverage
+        const wb = XLSX.read(buf, { type: 'array', bookSheets: true });
+        resolve(wb);
+      } catch (e) { reject(e); }
+    }).catch(() => null);
+
+    // Fallback: extract text from pptx XML using basic zip parsing
+    // Since we can't easily parse pptx without a dedicated lib, show download option
+    el.innerHTML = `<div style="padding:2rem;text-align:center;">
+      <div style="font-size:4rem;margin-bottom:1rem;">\uD83D\uDCCA</div>
+      <p style="font-size:1rem;font-weight:600;margin-bottom:.5rem;">${escapeHtml(path.split('/').pop())}</p>
+      <p style="color:var(--text-secondary);margin-bottom:1rem;font-size:.88rem;">PowerPointのプレビューは現在限定的です</p>
+      <a class="btn btn-accent" href="/download/${encodeURIComponent(path)}" download>\uD83D\uDCBE ダウンロードして開く</a>
+    </div>`;
+  } catch (e) {
+    console.error('PPTX preview error:', e);
+    el.innerHTML = `<div style="padding:2rem;text-align:center;">
+      <p style="color:var(--danger);margin-bottom:.5rem;">プレビューに失敗しました</p>
+      <a class="btn btn-sm" href="/download/${encodeURIComponent(path)}" download>\uD83D\uDCBE ダウンロードして開く</a>
+    </div>`;
+  }
+}
+
 /* ========= HTML escape ========= */
 function escapeHtml(str) {
   const map = { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' };
   return String(str).replace(/[&<>"']/g, s => map[s]);
 }
 
+/* ========= File Upload via Button ========= */
+function handleFileUpload(files) {
+  if (!files || !files.length) return;
+  uploadFilesOrEntries({ filesFallback: [...files] });
+  // Reset the input so the same file can be re-selected
+  document.getElementById('upload-input').value = '';
+}
+
+/* ========= Panel Resizer ========= */
+function initResizer() {
+  const resizer = document.getElementById('panel-resizer');
+  const fileList = document.getElementById('file-list');
+  if (!resizer || !fileList) return;
+
+  let startX, startWidth;
+
+  resizer.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    startX = e.clientX;
+    startWidth = fileList.offsetWidth;
+    resizer.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMove = (e) => {
+      const dx = e.clientX - startX;
+      const newWidth = Math.max(240, Math.min(startWidth + dx, window.innerWidth * 0.8));
+      fileList.style.width = newWidth + 'px';
+    };
+
+    const onUp = () => {
+      resizer.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+/* ========= Keyboard Shortcuts ========= */
+function initKeyboardShortcuts() {
+  document.addEventListener('keydown', (e) => {
+    // Ctrl+F: focus filter
+    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+      const filter = document.getElementById('filter-input');
+      if (filter && document.activeElement.tagName !== 'TEXTAREA' && document.activeElement.tagName !== 'INPUT') {
+        e.preventDefault();
+        filter.focus();
+        filter.select();
+      }
+    }
+    // Escape: close modals, context menu, side panel
+    if (e.key === 'Escape') {
+      hideContextMenu();
+      closeSidePanel();
+      ['readme-backdrop', 'input-backdrop', 'qr-backdrop'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && el.style.display === 'flex') closeModal(id);
+      });
+    }
+  });
+}
+
 /* ========= D&D Upload with Progress ========= */
 window.addEventListener('DOMContentLoaded', () => {
   applyStoredTheme();
   applyView();
-  // サーバーからお気に入りを取得してから星を反映
+  initMoveDragAndDrop();
+  initResizer();
+  initKeyboardShortcuts();
   fetchFavs().then(() => refreshStars());
+
+  // Close context menu on click elsewhere
+  document.addEventListener('click', () => hideContextMenu());
 
   const overlay = document.getElementById('drop-overlay');
   let dragCounter = 0;
 
   document.addEventListener('dragenter', (e) => {
-    e.preventDefault(); dragCounter++; overlay.style.display = 'flex';
+    if (!isExternalFileDrag(e)) return;
+    e.preventDefault();
+    dragCounter++;
+    overlay.style.display = 'flex';
   });
   document.addEventListener('dragleave', () => {
-    dragCounter--;
+    if (activeDraggedEntry) return;
+    dragCounter = Math.max(0, dragCounter - 1);
     if (dragCounter <= 0) overlay.style.display = 'none';
   });
   document.addEventListener('dragover', (e) => {
-    e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
+    if (!isExternalFileDrag(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
   });
   document.addEventListener('drop', async (e) => {
-    e.preventDefault(); overlay.style.display = 'none'; dragCounter = 0;
+    if (activeDraggedEntry) {
+      clearMoveDropHighlights();
+      activeDraggedEntry = null;
+      overlay.style.display = 'none';
+      dragCounter = 0;
+      return;
+    }
+    if (!isExternalFileDrag(e)) return;
+    e.preventDefault();
+    overlay.style.display = 'none';
+    dragCounter = 0;
     const items = [...(e.dataTransfer.items || [])];
     const files = [...(e.dataTransfer.files || [])];
     const hasEntries = items.some(it => typeof it.webkitGetAsEntry === 'function' && it.webkitGetAsEntry());
@@ -721,7 +1354,7 @@ window.addEventListener('DOMContentLoaded', () => {
     } else if (files.length) {
       await uploadFilesOrEntries({ filesFallback: files });
     } else {
-      alert('アップロードできる項目がありません');
+      showToast('アップロードできる項目がありません', 'error');
     }
   });
 });
@@ -749,17 +1382,14 @@ async function uploadFilesOrEntries({ items = null, filesFallback = null }) {
   }
 
   if ([...formData.entries()].length === 0) {
-    alert('アップロード対象がありません'); return;
+    showToast('アップロード対象がありません', 'error'); return;
   }
 
-  // Upload with progress
   const progressEl = document.getElementById('upload-progress');
   const barEl = document.getElementById('upload-bar');
-  const toastEl = document.getElementById('upload-toast');
   progressEl.style.display = 'block';
   barEl.style.width = '0%';
-  toastEl.style.display = 'block';
-  toastEl.textContent = 'アップロード中… 0%';
+  showToast('アップロード中…', 'info', 60000);
 
   try {
     await new Promise((resolve, reject) => {
@@ -770,7 +1400,6 @@ async function uploadFilesOrEntries({ items = null, filesFallback = null }) {
         if (e.lengthComputable) {
           const pct = Math.round((e.loaded / e.total) * 100);
           barEl.style.width = pct + '%';
-          toastEl.textContent = `アップロード中… ${pct}%`;
         }
       };
 
@@ -783,23 +1412,18 @@ async function uploadFilesOrEntries({ items = null, filesFallback = null }) {
     });
 
     barEl.style.width = '100%';
-    toastEl.textContent = '✓ アップロード完了';
-    toastEl.style.color = 'var(--success)';
+    // Remove pending toast
+    document.querySelectorAll('.toast').forEach(t => t.remove());
+    showToast('アップロード完了', 'success');
     setTimeout(() => {
       progressEl.style.display = 'none';
-      toastEl.style.display = 'none';
-      toastEl.style.color = '';
       location.reload();
     }, 800);
   } catch (e) {
     console.error(e);
-    toastEl.textContent = '✗ アップロード失敗';
-    toastEl.style.color = 'var(--danger)';
-    setTimeout(() => {
-      progressEl.style.display = 'none';
-      toastEl.style.display = 'none';
-      toastEl.style.color = '';
-    }, 3000);
+    document.querySelectorAll('.toast').forEach(t => t.remove());
+    showToast('アップロード失敗', 'error');
+    setTimeout(() => { progressEl.style.display = 'none'; }, 3000);
   }
 }
 

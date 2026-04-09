@@ -1,9 +1,5 @@
 @echo off
-<<<<<<< HEAD
-cd /d "C:path"
-=======
-cd /d C:\workspace\Local_File_Server
->>>>>>> e05e82e (GUI)
+cd /d C:\Users\kanomax01\Documents\shoji\test\local_server
 start http://localhost:5000/
 python app.py
 pause
