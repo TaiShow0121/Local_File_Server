@@ -1,5 +1,5 @@
 @echo off
-cd /d C:\Users\kanomax01\Documents\shoji\test\local_server
+cd /d "%~dp0"
 start http://localhost:5000/
 python app.py
 pause
