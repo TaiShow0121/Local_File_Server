@@ -1,160 +1,729 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="ja" data-theme="light">
 <head>
   <meta charset="UTF-8">
-  <title>server</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Local File Server</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="/static/script.js" defer></script>
   <style>
-    :root { --bar-h: 48px; }
-    body { margin: 0; font-family: sans-serif; }
-    #preview img, #preview video, #preview audio, #preview iframe {
+    /* ===== CSS Variables ===== */
+    :root {
+      --bar-h: 56px;
+      --toolbar-h: 46px;
+      --bg: #f0f2f5;
+      --bg-secondary: #ffffff;
+      --bg-hover: #e8edf2;
+      --bg-active: #dce4ed;
+      --text: #1a1a2e;
+      --text-secondary: #6b7280;
+      --text-muted: #9ca3af;
+      --border: #e2e8f0;
+      --border-light: #f1f5f9;
+      --accent: #4f46e5;
+      --accent-light: #818cf8;
+      --accent-bg: #eef2ff;
+      --accent-hover: #4338ca;
+      --danger: #ef4444;
+      --danger-hover: #dc2626;
+      --danger-bg: #fef2f2;
+      --success: #10b981;
+      --success-bg: #ecfdf5;
+      --warning: #f59e0b;
+      --card-bg: #ffffff;
+      --code-bg: #f8fafc;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,.05);
+      --shadow: 0 4px 6px -1px rgba(0,0,0,.07), 0 2px 4px -2px rgba(0,0,0,.05);
+      --shadow-lg: 0 10px 25px -3px rgba(0,0,0,.1), 0 4px 6px -4px rgba(0,0,0,.05);
+      --shadow-xl: 0 20px 40px -4px rgba(0,0,0,.12);
+      --modal-bg: rgba(15,23,42,.45);
+      --toolbar-bg: #eef2ff;
+      --badge-bg: #e2e8f0;
+      --radius: 10px;
+      --radius-lg: 16px;
+      --gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      --gradient-accent: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    }
+    [data-theme="dark"] {
+      --bg: #0f172a;
+      --bg-secondary: #1e293b;
+      --bg-hover: #334155;
+      --bg-active: #475569;
+      --text: #f1f5f9;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --border: #334155;
+      --border-light: #1e293b;
+      --accent: #818cf8;
+      --accent-light: #a5b4fc;
+      --accent-bg: #1e1b4b;
+      --accent-hover: #6366f1;
+      --danger: #f87171;
+      --danger-hover: #ef4444;
+      --danger-bg: #450a0a;
+      --success: #34d399;
+      --success-bg: #064e3b;
+      --warning: #fbbf24;
+      --card-bg: #1e293b;
+      --code-bg: #0f172a;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,.2);
+      --shadow: 0 4px 6px rgba(0,0,0,.25);
+      --shadow-lg: 0 10px 25px rgba(0,0,0,.35);
+      --shadow-xl: 0 20px 40px rgba(0,0,0,.45);
+      --modal-bg: rgba(0,0,0,.6);
+      --toolbar-bg: #1e1b4b;
+      --badge-bg: #334155;
+      --gradient: linear-gradient(135deg, #4338ca 0%, #6d28d9 100%);
+      --gradient-accent: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    }
+
+    /* ===== Reset & Base ===== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg); color: var(--text);
+      transition: background .3s ease, color .3s ease;
+      line-height: 1.5;
+    }
+    a { color: var(--accent); text-decoration: none; transition: color .15s; }
+    a:hover { color: var(--accent-hover); }
+    ::selection { background: var(--accent); color: #fff; }
+
+    /* ===== Header / Breadcrumb ===== */
+    .header {
+      position: sticky; top: 0; z-index: 20;
+      background: var(--gradient);
+      color: #fff;
+      box-shadow: var(--shadow-lg);
+    }
+    .header-inner {
+      display: flex; align-items: center; gap: .75rem;
+      height: var(--bar-h);
+      padding: 0 1.25rem;
       max-width: 100%;
     }
-    /* 上部パンくずバー */
-    .breadcrumb-bar {
-      position: sticky; top: 0; z-index: 10;
-      display: flex; align-items: center; gap: .5rem;
-      height: var(--bar-h);
-      padding: 0 1rem;
-      border-bottom: 1px solid #e5e5e5;
-      background: #fafafa;
-      white-space: nowrap;
+    .header-logo {
+      font-size: 1.15rem; font-weight: 700; letter-spacing: -.02em;
+      display: flex; align-items: center; gap: .4rem;
+      text-shadow: 0 1px 2px rgba(0,0,0,.15);
+    }
+    .header-logo .logo-icon {
+      width: 28px; height: 28px; background: rgba(255,255,255,.2);
+      border-radius: 8px; display: flex; align-items: center; justify-content: center;
+      font-size: 1rem;
+    }
+    .breadcrumb {
+      display: flex; align-items: center; gap: .3rem;
+      font-size: .9rem; font-weight: 500;
       overflow: auto hidden;
+      margin-left: .5rem;
     }
-    .breadcrumb-bar a { color: #0366d6; text-decoration: none; }
-    .breadcrumb-sep { color: #999; }
-    .breadcrumb-right { margin-left: auto; display: flex; gap: .5rem; }
-        /* リンク風 */
-    .link-usage {
-      color: #0366d6;
-      text-decoration: underline;
-      cursor: pointer;
-      font-size: 0.95rem;
-      padding: 0;
-      border: none;
-      background: none;
+    .breadcrumb a { color: rgba(255,255,255,.8); }
+    .breadcrumb a:hover { color: #fff; }
+    .breadcrumb-sep { color: rgba(255,255,255,.4); font-size: .8rem; }
+    .header-right {
+      margin-left: auto; display: flex; align-items: center; gap: .4rem;
     }
-    .link-usage:hover {
-      text-decoration: none;
-      color: #024ea2;
+    .header-btn {
+      border: none; background: rgba(255,255,255,.15); color: #fff;
+      cursor: pointer; padding: .4rem .65rem; border-radius: 8px;
+      font-size: .85rem; font-weight: 500;
+      display: flex; align-items: center; gap: .3rem;
+      transition: background .15s;
+      backdrop-filter: blur(4px);
     }
-    .mtime{ color:#666; font-size:.9em; margin-right:.5rem; }
-    /* 2カラム本体 */
+    .header-btn:hover { background: rgba(255,255,255,.25); }
+    .header-btn .icon { font-size: 1.05rem; }
+
+    /* ===== Toolbar ===== */
+    .toolbar {
+      display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+      padding: .5rem 1.25rem;
+      height: auto; min-height: var(--toolbar-h);
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      box-shadow: var(--shadow-sm);
+    }
+    .toolbar-group {
+      display: flex; align-items: center; gap: .35rem;
+    }
+    .toolbar-input {
+      padding: .4rem .75rem; border: 1.5px solid var(--border); border-radius: 8px;
+      background: var(--bg); color: var(--text); font-size: .85rem;
+      font-family: inherit;
+      transition: border-color .2s, box-shadow .2s;
+      outline: none;
+    }
+    .toolbar-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(79,70,229,.15);
+    }
+    .toolbar-select {
+      padding: .4rem .5rem; border: 1.5px solid var(--border); border-radius: 8px;
+      background: var(--bg); color: var(--text); font-size: .83rem;
+      font-family: inherit; cursor: pointer; outline: none;
+    }
+    .toolbar-spacer { flex: 1; }
+
+    /* ===== Batch Toolbar ===== */
+    .batch-bar {
+      display: none; align-items: center; gap: .75rem;
+      padding: .5rem 1.25rem;
+      background: var(--accent-bg);
+      border-bottom: 1px solid var(--accent);
+      font-size: .9rem; font-weight: 500;
+      animation: slideDown .2s ease;
+    }
+    .batch-bar.active { display: flex; }
+    @keyframes slideDown {
+      from { opacity: 0; transform: translateY(-8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ===== Buttons ===== */
+    .btn {
+      display: inline-flex; align-items: center; gap: .3rem;
+      padding: .4rem .75rem; border: 1.5px solid var(--border); border-radius: 8px;
+      background: var(--card-bg); color: var(--text); cursor: pointer;
+      font-size: .83rem; font-weight: 500; font-family: inherit;
+      white-space: nowrap;
+      transition: all .15s ease;
+      box-shadow: var(--shadow-sm);
+    }
+    .btn:hover { background: var(--bg-hover); transform: translateY(-1px); box-shadow: var(--shadow); }
+    .btn:active { transform: translateY(0); }
+    .btn-accent {
+      background: var(--gradient-accent); color: #fff;
+      border-color: transparent; box-shadow: 0 2px 8px rgba(79,70,229,.3);
+    }
+    .btn-accent:hover { opacity: .9; box-shadow: 0 4px 12px rgba(79,70,229,.4); }
+    .btn-danger { color: var(--danger); border-color: var(--danger); background: var(--danger-bg); }
+    .btn-danger:hover { background: var(--danger); color: #fff; }
+    .btn-ghost {
+      border: none; background: none; box-shadow: none;
+      color: var(--text-secondary); padding: .3rem .5rem;
+    }
+    .btn-ghost:hover { background: var(--bg-hover); color: var(--text); box-shadow: none; transform: none; }
+    .btn-sm { padding: .25rem .5rem; font-size: .8rem; border-radius: 6px; }
+
+    /* ===== Main Layout ===== */
     .main {
       display: flex;
-      height: calc(100vh - var(--bar-h));
+      height: calc(100vh - var(--bar-h) - var(--toolbar-h) - 2px);
     }
-    #file-list { width: 40%; border-right: 1px solid #ccc; padding: 1em; overflow: auto; }
-    #preview   { width: 60%; padding: 1em; white-space: pre-wrap; overflow: auto; }
+    .main.has-batch { height: calc(100vh - var(--bar-h) - var(--toolbar-h) - 42px); }
 
-    .file-entry { display: flex; justify-content: space-between; gap: .75rem; margin: .5em 0; }
-    .file-name { cursor: pointer; color: #0366d6; }
-    .btn       { padding: .35rem .6rem; border: 1px solid #ccc; background: #fff; cursor: pointer; }
-    .btn:hover { background: #f5f5f5; }
-    
+    /* ===== File List ===== */
+    #file-list {
+      width: 42%; border-right: 1px solid var(--border);
+      overflow: auto; padding: .5rem;
+      background: var(--bg);
+      scroll-behavior: smooth;
+    }
+    .file-entry {
+      display: flex; align-items: center; gap: .6rem;
+      padding: .55rem .75rem;
+      margin-bottom: 2px;
+      border-radius: var(--radius);
+      transition: all .15s ease;
+      cursor: default;
+      position: relative;
+    }
+    .file-entry:hover {
+      background: var(--bg-secondary);
+      box-shadow: var(--shadow-sm);
+    }
+    .file-entry.selected {
+      background: var(--accent-bg);
+      box-shadow: inset 0 0 0 1.5px var(--accent-light);
+    }
+    .file-entry input[type="checkbox"] {
+      flex-shrink: 0; cursor: pointer;
+      width: 16px; height: 16px;
+      accent-color: var(--accent);
+    }
+    .file-icon {
+      width: 36px; height: 36px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.2rem; flex-shrink: 0;
+    }
+    .file-icon.folder { background: #fef3c7; }
+    [data-theme="dark"] .file-icon.folder { background: #451a03; }
+    .file-icon.file { background: var(--accent-bg); }
+    .file-info { flex: 1; min-width: 0; }
+    .file-name {
+      cursor: pointer; color: var(--text); font-weight: 500; font-size: .9rem;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      display: block; transition: color .15s;
+    }
+    .file-name:hover { color: var(--accent); }
+    .file-meta {
+      font-size: .75rem; color: var(--text-muted); margin-top: .1rem;
+      display: flex; gap: .5rem;
+    }
+    .file-actions {
+      display: flex; align-items: center; gap: .2rem; flex-shrink: 0;
+      opacity: 0; transition: opacity .15s;
+    }
+    .file-entry:hover .file-actions { opacity: 1; }
+    .action-btn {
+      width: 30px; height: 30px; border: none; border-radius: 6px;
+      background: transparent; cursor: pointer; font-size: .9rem;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .15s;
+      color: var(--text-secondary);
+    }
+    .action-btn:hover { background: var(--bg-hover); }
+    .action-btn.danger:hover { background: var(--danger-bg); color: var(--danger); }
 
-    /* モーダル */
-    .modal-backdrop{
+    /* Star */
+    .star-btn {
+      font-size: .95rem; cursor: pointer; background: none; border: none; padding: .1rem;
+      color: var(--text-muted); transition: color .15s, transform .2s;
+    }
+    .star-btn:hover { transform: scale(1.2); }
+    .star-btn.active { color: #f59e0b; }
+
+    /* ===== Grid View ===== */
+    #file-list.grid-view {
+      display: flex; flex-wrap: wrap; align-content: flex-start;
+      padding: .75rem; gap: .6rem;
+    }
+    #file-list.grid-view .file-entry {
+      flex-direction: column; align-items: center;
+      width: 130px; padding: .75rem .5rem; text-align: center;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-light);
+      box-shadow: var(--shadow-sm);
+    }
+    #file-list.grid-view .file-entry:hover {
+      box-shadow: var(--shadow);
+      transform: translateY(-2px);
+    }
+    #file-list.grid-view .file-icon {
+      width: 48px; height: 48px; font-size: 1.5rem;
+      margin-bottom: .4rem;
+    }
+    #file-list.grid-view .file-info { width: 100%; }
+    #file-list.grid-view .file-name { font-size: .82rem; text-align: center; }
+    #file-list.grid-view .file-meta { font-size: .7rem; justify-content: center; }
+    #file-list.grid-view .file-actions { opacity: 1; justify-content: center; flex-wrap: wrap; margin-top: .3rem; }
+
+    /* ===== Empty State ===== */
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; height: 60%; gap: .5rem;
+      color: var(--text-muted); text-align: center; padding: 2rem;
+    }
+    .empty-state .empty-icon {
+      width: 80px; height: 80px; border-radius: 50%;
+      background: var(--accent-bg);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 2.2rem; margin-bottom: .5rem;
+    }
+    .empty-state p { margin: 0; }
+    .empty-state .empty-title { font-size: 1.05rem; font-weight: 600; color: var(--text-secondary); }
+    .empty-state .empty-desc { font-size: .85rem; }
+
+    /* ===== Preview ===== */
+    #preview {
+      width: 58%; padding: 1.25rem; white-space: pre-wrap; overflow: auto;
+      background: var(--bg-secondary);
+    }
+    #preview img, #preview video, #preview audio, #preview iframe { max-width: 100%; }
+
+    /* ===== Drop Overlay ===== */
+    #drop-overlay {
       position: fixed; inset: 0;
-      background: rgba(0,0,0,.45);
+      background: rgba(79,70,229,.85); color: #fff;
+      display: none; align-items: center; justify-content: center;
+      font-size: 1.3em; z-index: 1000;
+      flex-direction: column; gap: .75rem;
+      backdrop-filter: blur(8px);
+    }
+    .drop-icon {
+      width: 80px; height: 80px; border-radius: 50%;
+      border: 3px dashed rgba(255,255,255,.5);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 2rem;
+      animation: dropBounce 1s infinite;
+    }
+    @keyframes dropBounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+
+    /* ===== Progress Bar ===== */
+    .upload-progress {
+      position: fixed; top: 0; left: 0; right: 0;
+      height: 3px; background: transparent;
+      z-index: 1002; display: none;
+    }
+    .upload-progress .bar {
+      height: 100%; background: var(--gradient-accent);
+      width: 0; transition: width .2s ease;
+      border-radius: 0 2px 2px 0;
+      box-shadow: 0 0 10px rgba(79,70,229,.5);
+    }
+    .upload-toast {
+      position: fixed; bottom: 20px; right: 20px;
+      background: var(--card-bg); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: .75rem 1.25rem;
+      box-shadow: var(--shadow-xl);
+      font-size: .9rem; font-weight: 500;
+      z-index: 1003; display: none;
+      animation: toastIn .3s ease;
+    }
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(12px) scale(.95); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    /* ===== Modal ===== */
+    .modal-backdrop {
+      position: fixed; inset: 0;
+      background: var(--modal-bg);
       display: none; align-items: center; justify-content: center;
       z-index: 1001;
+      backdrop-filter: blur(4px);
+      animation: fadeIn .2s ease;
     }
-    .modal{
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .modal {
       width: min(900px, 92vw); max-height: 86vh; overflow: auto;
-      background: #fff; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.25);
+      background: var(--card-bg); border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-xl);
+      animation: modalIn .25s ease;
     }
-    .modal-header{
-      display:flex; align-items:center; gap:1rem;
-      padding:.75rem 1rem; border-bottom:1px solid #eee;
+    @keyframes modalIn {
+      from { opacity: 0; transform: translateY(16px) scale(.97); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
     }
-    .modal-header h3{ margin:0; font-size:1rem; }
-    .modal-body{
-      padding: 1rem 1.25rem;
+    .modal-header {
+      display: flex; align-items: center; gap: 1rem;
+      padding: 1rem 1.25rem; border-bottom: 1px solid var(--border);
     }
-    .modal-close{
-      margin-left:auto; border:1px solid #ccc; background:#fff; cursor:pointer;
-      padding:.25rem .5rem; border-radius:6px;
+    .modal-header h3 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+    .modal-body { padding: 1.25rem 1.5rem; }
+    .modal-close {
+      margin-left: auto; border: 1.5px solid var(--border); background: var(--card-bg);
+      cursor: pointer; padding: .3rem .6rem; border-radius: 8px; color: var(--text);
+      font-size: .85rem; transition: all .15s;
+    }
+    .modal-close:hover { background: var(--bg-hover); }
+
+    /* ===== Side panel ===== */
+    .side-panel {
+      display: none; flex-direction: column;
+      width: 42%; border-right: 1px solid var(--border);
+      overflow: auto; background: var(--bg);
+    }
+    .side-panel.active { display: flex; }
+    .side-panel-header {
+      display: flex; align-items: center; gap: .5rem;
+      padding: .65rem 1rem; border-bottom: 1px solid var(--border);
+      background: var(--bg-secondary); font-weight: 600; font-size: .9rem;
+      position: sticky; top: 0;
+    }
+    .side-panel-body { flex: 1; overflow: auto; padding: .5rem; }
+    .side-panel-item {
+      padding: .5rem .75rem; border-radius: 8px; cursor: pointer;
+      font-size: .88rem; display: flex; align-items: center; gap: .5rem;
+      transition: background .15s;
+    }
+    .side-panel-item:hover { background: var(--bg-secondary); }
+
+    /* ===== Input Modal ===== */
+    .input-modal-content {
+      display: flex; flex-direction: column; gap: .85rem;
+    }
+    .input-modal-content label { font-weight: 600; font-size: .9rem; }
+    .input-modal-content input {
+      padding: .5rem .75rem; border: 1.5px solid var(--border); border-radius: 8px;
+      background: var(--bg); color: var(--text); font-size: .95rem;
+      font-family: inherit; outline: none;
+      transition: border-color .2s, box-shadow .2s;
+    }
+    .input-modal-content input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(79,70,229,.15);
+    }
+    .input-modal-content .btn-row {
+      display: flex; justify-content: flex-end; gap: .5rem; margin-top: .25rem;
     }
 
-    /* READMEの基本装飾 */
-    .md-body h1,.md-body h2,.md-body h3{ margin-top:1.2em; }
-    .md-body pre{ background:#f6f8fa; padding:.75rem; overflow:auto; border-radius:6px; }
-    .md-body code{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .md-body table{ border-collapse: collapse; }
-    .md-body table th, .md-body table td{ border:1px solid #ddd; padding:.35rem .5rem; }
+    /* ===== QR Modal ===== */
+    #qr-body { text-align: center; padding: 1.5rem; }
+    #qr-body canvas { margin: .75rem auto; display: block; border-radius: 8px; }
+    #qr-url {
+      font-size: .95rem; color: var(--accent); font-weight: 500;
+      word-break: break-all; margin-top: .5rem;
+      padding: .5rem; background: var(--accent-bg); border-radius: 8px;
+    }
+
+    /* ===== Markdown body ===== */
+    .md-body h1,.md-body h2,.md-body h3 { margin-top: 1.2em; }
+    .md-body pre {
+      background: var(--code-bg); padding: .85rem; overflow: auto;
+      border-radius: var(--radius); border: 1px solid var(--border);
+    }
+    .md-body code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; }
+    .md-body table { border-collapse: collapse; width: 100%; }
+    .md-body table th { background: var(--bg); }
+    .md-body table th, .md-body table td { border: 1px solid var(--border); padding: .45rem .65rem; }
+
+    /* ===== Search results ===== */
+    .search-result { padding: .6rem .5rem; border-bottom: 1px solid var(--border-light); }
+    .search-result-path {
+      font-size: .85rem; color: var(--accent); cursor: pointer;
+      font-weight: 500;
+    }
+    .search-result-snippet {
+      font-size: .8rem; color: var(--text-secondary); margin-top: .3rem;
+      background: var(--code-bg); padding: .4rem .6rem; border-radius: 6px;
+      white-space: pre-wrap; overflow: hidden;
+      border: 1px solid var(--border-light);
+    }
+    .search-badge {
+      display: inline-block; font-size: .7rem; padding: .1rem .4rem;
+      border-radius: 4px; background: var(--accent-bg); color: var(--accent);
+      font-weight: 600; margin-left: .3rem;
+    }
+
+    /* ===== Custom Scrollbar ===== */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+    /* ===== Responsive ===== */
+    @media (max-width: 768px) {
+      .main { flex-direction: column; }
+      #file-list, #preview, .side-panel { width: 100% !important; height: 50vh; }
+      .toolbar { padding: .4rem .75rem; }
+      .header-inner { padding: 0 .75rem; }
+      .header-logo span { display: none; }
+    }
   </style>
 </head>
 <body>
 
-  <!-- パンくず -->
-  <nav class="breadcrumb-bar">
-    <a href="{{ url_for('browse') }}">files</a>
-    {% for c in breadcrumbs %}
-      <span class="breadcrumb-sep">/</span>
-      <a href="{{ url_for('browse', subpath=c.path) }}">{{ c.name }}</a>
-    {% endfor %}
+  <!-- Header -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="header-logo">
+        <div class="logo-icon">&#128449;</div>
+        <span>Local File Server</span>
+      </div>
 
-    <div class="breadcrumb-right">
-      <a href="javascript:void(0)" class="link-usage" onclick="openReadme()">使用方法</a>
-      {% if subpath %}
-        <a class="btn" href="/download-folder/{{ subpath }}">このフォルダをZIP</a>
-        <a class="btn" href="{{ url_for('browse', subpath=parent_path) }}">⬅ 上へ</a>
+      <nav class="breadcrumb">
+        <a href="{{ url_for('browse') }}">files</a>
+        {% for c in breadcrumbs %}
+          <span class="breadcrumb-sep">/</span>
+          <a href="{{ url_for('browse', subpath=c.path) }}">{{ c.name }}</a>
+        {% endfor %}
+      </nav>
+
+      <div class="header-right">
+        <button class="header-btn" onclick="toggleTheme()" id="theme-toggle" title="テーマ切替">
+          <span class="icon">🌙</span>
+        </button>
+        <button class="header-btn" onclick="openQR()" title="QRコード">
+          <span class="icon">📱</span>
+        </button>
+        <button class="header-btn" onclick="openReadme()">
+          <span class="icon">📖</span> <span>使い方</span>
+        </button>
+        {% if subpath %}
+          <a class="header-btn" href="/download-folder/{{ subpath }}">
+            <span class="icon">📦</span> <span>ZIP</span>
+          </a>
+          <a class="header-btn" href="{{ url_for('browse', subpath=parent_path) }}">
+            <span class="icon">⬆</span> <span>上へ</span>
+          </a>
+        {% endif %}
+      </div>
+    </div>
+  </header>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="toolbar-group">
+      <input type="text" class="toolbar-input" id="filter-input" placeholder="&#128269; フィルタ..." style="width:160px;"
+             oninput="filterEntries()">
+    </div>
+    <div class="toolbar-group">
+      <input type="text" class="toolbar-input" id="search-input" placeholder="&#128270; 全文検索..." style="width:160px;"
+             onkeydown="if(event.key==='Enter')doSearch()">
+      <button class="btn btn-sm" onclick="doSearch()">検索</button>
+    </div>
+
+    <select class="toolbar-select" id="sort-select" onchange="sortEntries()">
+      <option value="name-asc">名前 ↑</option>
+      <option value="name-desc">名前 ↓</option>
+      <option value="size-asc">サイズ ↑</option>
+      <option value="size-desc">サイズ ↓</option>
+      <option value="date-asc">日時 ↑</option>
+      <option value="date-desc">日時 ↓</option>
+    </select>
+
+    <button class="btn btn-sm btn-ghost" onclick="toggleView()" id="view-toggle" title="表示切替">📋 リスト</button>
+
+    <div class="toolbar-spacer"></div>
+
+    <button class="btn btn-sm btn-accent" onclick="openMkdir()">+ 新規フォルダ</button>
+    <button class="btn btn-sm btn-ghost" onclick="showFavorites()">⭐ お気に入り</button>
+    <button class="btn btn-sm btn-ghost" onclick="showRecent()">🕐 最近</button>
+  </div>
+
+  <!-- Batch actions -->
+  <div class="batch-bar" id="batch-bar">
+    <input type="checkbox" id="select-all" onchange="toggleSelectAll(this.checked)" style="accent-color:var(--accent);">
+    <span id="selected-count" style="font-weight:600;">0件選択</span>
+    <button class="btn btn-sm btn-danger" onclick="batchDelete()">🗑 一括削除</button>
+    <button class="btn btn-sm" onclick="batchDownload()">📦 一括ZIP</button>
+    <button class="btn btn-sm btn-ghost" onclick="clearSelection()">選択解除</button>
+  </div>
+
+  <div class="main" id="main-area">
+    <!-- Side panel -->
+    <div class="side-panel" id="side-panel">
+      <div class="side-panel-header">
+        <span id="side-panel-title">検索結果</span>
+        <div style="margin-left:auto;">
+          <button class="btn btn-sm btn-ghost" onclick="closeSidePanel()">✕ 閉じる</button>
+        </div>
+      </div>
+      <div class="side-panel-body" id="side-panel-body"></div>
+    </div>
+
+    <!-- File list -->
+    <div id="file-list">
+      {% if entries %}
+        {% for entry in entries %}
+        <div class="file-entry"
+             data-path="{{ entry.path }}"
+             data-name="{{ entry.name }}"
+             data-type="{{ entry.type }}"
+             data-size="{{ entry.size }}"
+             data-mtime="{{ entry.mtime }}">
+          <input type="checkbox" class="entry-cb" data-path="{{ entry.path }}" onchange="updateBatchBar()">
+
+          <button class="star-btn" onclick="toggleFav('{{ entry.path }}','{{ entry.name }}','{{ entry.type }}')" data-path="{{ entry.path }}">☆</button>
+
+          <div class="file-icon {{ entry.type }}">
+            {% if entry.type == 'folder' %}📁{% else %}📄{% endif %}
+          </div>
+
+          <div class="file-info">
+            {% if entry.type == 'file' %}
+              <span class="file-name" onclick="previewFile('{{ entry.path }}'); addRecent('{{ entry.path }}','{{ entry.name }}');">
+                {{ entry.name }}
+              </span>
+            {% else %}
+              <a class="file-name" href="{{ url_for('browse', subpath=entry.path) }}">
+                {{ entry.name }}/
+              </a>
+            {% endif %}
+            <div class="file-meta">
+              <span>{{ entry.size }}</span>
+              <span>{{ entry.mtime }}</span>
+            </div>
+          </div>
+
+          <div class="file-actions">
+            <button class="action-btn" onclick="openRename('{{ entry.path }}','{{ entry.name }}')" title="リネーム">✏️</button>
+            {% if entry.type == 'file' %}
+              <a class="action-btn" href="/download/{{ entry.path }}" download title="保存">💾</a>
+            {% else %}
+              <a class="action-btn" href="/download-folder/{{ entry.path }}" title="ZIP">📦</a>
+            {% endif %}
+            <button class="action-btn danger" onclick="deletePath('{{ entry.path }}', {{ 'true' if entry.type == 'folder' else 'false' }})" title="削除">🗑</button>
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="empty-state">
+          <div class="empty-icon">📂</div>
+          <p class="empty-title">ファイルがありません</p>
+          <p class="empty-desc">ドラッグ&ドロップでアップロードできます</p>
+          <button class="btn btn-accent" onclick="openMkdir()" style="margin-top:.75rem;">+ 新規フォルダ作成</button>
+        </div>
       {% endif %}
     </div>
-  </nav>
 
-  <div class="main">
-    <div id="file-list">
-      {% for entry in entries %}
-    <div class="file-entry">
-      <div>
-        {% if entry.type == 'file' %}
-          <span class="file-name" onclick="previewFile('{{ entry.path }}')">📄 {{ entry.name }}</span>
-        {% else %}
-          <span><a href="{{ url_for('browse', subpath=entry.path) }}">📁 {{ entry.name }}/</a></span>
-        {% endif %}
-        <span style="color:#666; margin-left:0.5em;">({{ entry.size }})</span>
+    <!-- Preview pane -->
+    <div id="preview">
+      <div class="empty-state">
+        <div class="empty-icon">👁</div>
+        <p class="empty-title">プレビュー</p>
+        <p class="empty-desc">ファイルをクリックして表示</p>
       </div>
-      <span>
-        <!-- ここが追加 -->
-        <span class="mtime">{{ entry.mtime }}</span>
-
-        {% if entry.type == 'file' %}
-          <a class="btn" href="/download/{{ entry.path }}" download>保存</a>
-          <button class="btn" onclick="deletePath('{{ entry.path }}', false)">削除</button>
-        {% else %}
-          <a class="btn" href="/download-folder/{{ entry.path }}">ZIP</a>
-          <button class="btn" onclick="deletePath('{{ entry.path }}', true)">削除</button>
-        {% endif %}
-      </span>
     </div>
-      {% endfor %}
-    </div>
-
-    <div id="preview">ファイルの表示</div>
   </div>
 
-  <!-- ドロップオーバーレイ -->
-  <div id="drop-overlay"
-     style="position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.4); color: white;
-            display: none; align-items: center; justify-content: center;
-            font-size: 2em; z-index: 1000;">
-    🔽 ドロップでアップロード
+  <!-- Drop overlay -->
+  <div id="drop-overlay">
+    <div class="drop-icon">📥</div>
+    <span style="font-weight:600;">ドロップでアップロード</span>
+    <span style="font-size:.85rem;opacity:.8;">ファイルまたはフォルダをここに</span>
   </div>
 
-  <!-- README モーダル -->
-  <div id="readme-backdrop" class="modal-backdrop" onclick="closeReadme(event)">
+  <!-- Upload progress -->
+  <div class="upload-progress" id="upload-progress">
+    <div class="bar" id="upload-bar"></div>
+  </div>
+  <div class="upload-toast" id="upload-toast"></div>
+
+  <!-- README modal -->
+  <div id="readme-backdrop" class="modal-backdrop" onclick="closeModal('readme-backdrop')">
     <div class="modal" onclick="event.stopPropagation()">
       <div class="modal-header">
         <h3 id="readme-title">README</h3>
-        <button class="modal-close" onclick="closeReadme()">✕</button>
+        <button class="modal-close" onclick="closeModal('readme-backdrop')">✕</button>
       </div>
-      <div id="readme-body" class="modal-body md-body">
-        読み込み中…
+      <div id="readme-body" class="modal-body md-body">読み込み中…</div>
+    </div>
+  </div>
+
+  <!-- Input modal (mkdir / rename) -->
+  <div id="input-backdrop" class="modal-backdrop" onclick="closeModal('input-backdrop')">
+    <div class="modal" style="width:min(440px,90vw);" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 id="input-modal-title">入力</h3>
+        <button class="modal-close" onclick="closeModal('input-backdrop')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="input-modal-content">
+          <label id="input-modal-label">名前</label>
+          <input type="text" id="input-modal-value"
+                 onkeydown="if(event.key==='Enter')document.getElementById('input-modal-ok').click()">
+          <div class="btn-row">
+            <button class="btn" onclick="closeModal('input-backdrop')">キャンセル</button>
+            <button class="btn btn-accent" id="input-modal-ok">OK</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
+
+  <!-- QR modal -->
+  <div id="qr-backdrop" class="modal-backdrop" onclick="closeModal('qr-backdrop')">
+    <div class="modal" style="width:min(380px,90vw);" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3>QRコード</h3>
+        <button class="modal-close" onclick="closeModal('qr-backdrop')">✕</button>
+      </div>
+      <div id="qr-body" class="modal-body">
+        <p style="color:var(--text-secondary);font-size:.9rem;margin-bottom:.75rem;">同一LAN内のデバイスからアクセス</p>
+        <canvas id="qr-canvas"></canvas>
+        <div id="qr-url"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>window.__subpath = "{{ subpath }}";</script>
 </body>
 </html>

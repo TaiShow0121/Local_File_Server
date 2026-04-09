@@ -2,8 +2,9 @@ from flask import Flask, render_template, send_file, abort, jsonify, request, ur
 import os
 import zipfile
 import io
-from datetime import datetime 
-import time      
+import json
+from datetime import datetime
+import time
 from urllib.parse import unquote
 import shutil
 from markupsafe import escape
@@ -282,11 +283,272 @@ def render_md(subpath):
     try:
         with open(path, 'r', encoding='utf-8', errors='ignore') as f:
             md_text = f.read()
-        html = _md_to_html(md_text)  # 既存の関数（markdown無ければ<pre>でフォールバック）
+        html = _md_to_html(md_text)
         return jsonify({'ok': True, 'html': html, 'path': subpath})
     except Exception as e:
         return jsonify({'ok': False, 'error': f'render error: {e}'}), 500
-    
+
+# --- リネーム ---
+@app.route('/rename', methods=['POST'])
+def rename_path():
+    data = request.get_json(silent=True) or {}
+    old_subpath = unquote(data.get('oldPath', '')).strip()
+    new_name = data.get('newName', '').strip()
+
+    if not old_subpath or not new_name:
+        return jsonify({'ok': False, 'error': 'missing parameters'}), 400
+    if '/' in new_name or '\\' in new_name:
+        return jsonify({'ok': False, 'error': 'invalid name'}), 400
+
+    old_full = safe_path(old_subpath)
+    if not os.path.exists(old_full):
+        return jsonify({'ok': False, 'error': 'not found'}), 404
+
+    new_full = os.path.join(os.path.dirname(old_full), new_name)
+    if not new_full.startswith(BASE_DIR):
+        return jsonify({'ok': False, 'error': 'forbidden'}), 403
+    if os.path.exists(new_full):
+        return jsonify({'ok': False, 'error': 'name already exists'}), 409
+
+    try:
+        os.rename(old_full, new_full)
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+# --- 新規フォルダ作成 ---
+@app.route('/mkdir', methods=['POST'])
+def mkdir():
+    data = request.get_json(silent=True) or {}
+    parent = unquote(data.get('parent', '')).strip()
+    name = data.get('name', '').strip()
+
+    if not name:
+        return jsonify({'ok': False, 'error': 'missing folder name'}), 400
+    if '/' in name or '\\' in name:
+        return jsonify({'ok': False, 'error': 'invalid name'}), 400
+
+    parent_full = safe_path(parent)
+    if not os.path.isdir(parent_full):
+        return jsonify({'ok': False, 'error': 'parent not found'}), 404
+
+    new_dir = os.path.join(parent_full, name)
+    if not new_dir.startswith(BASE_DIR):
+        return jsonify({'ok': False, 'error': 'forbidden'}), 403
+    if os.path.exists(new_dir):
+        return jsonify({'ok': False, 'error': 'already exists'}), 409
+
+    try:
+        os.makedirs(new_dir)
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+# --- テキストファイル保存 ---
+@app.route('/save', methods=['POST'])
+def save_file():
+    data = request.get_json(silent=True) or {}
+    subpath = unquote(data.get('subpath', '')).strip()
+    content = data.get('content', '')
+
+    if not subpath:
+        return jsonify({'ok': False, 'error': 'missing path'}), 400
+
+    full = safe_path(subpath)
+    if not os.path.isfile(full):
+        return jsonify({'ok': False, 'error': 'not found'}), 404
+
+    try:
+        with open(full, 'w', encoding='utf-8', newline='') as f:
+            f.write(content)
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+# --- 全文検索 ---
+@app.route('/search')
+def search_files():
+    q = request.args.get('q', '').strip()
+    scope = request.args.get('scope', '').strip()
+    if not q:
+        return jsonify({'ok': True, 'results': []})
+
+    search_root = safe_path(scope) if scope else BASE_DIR
+    if not os.path.isdir(search_root):
+        search_root = BASE_DIR
+
+    results = []
+    q_lower = q.lower()
+    TEXT_EXT = {'.txt','.md','.py','.js','.html','.htm','.css','.json','.xml',
+                '.csv','.yaml','.yml','.toml','.ini','.cfg','.bat','.sh','.log',
+                '.java','.c','.cpp','.h','.rs','.go','.ts','.tsx','.jsx','.vue',
+                '.rb','.php','.sql','.r','.m'}
+
+    for root, dirs, files in os.walk(search_root):
+        for fname in files:
+            full = os.path.join(root, fname)
+            rel = os.path.relpath(full, BASE_DIR).replace('\\', '/')
+
+            # ファイル名マッチ
+            name_match = q_lower in fname.lower()
+
+            # 内容マッチ（テキスト系のみ）
+            content_match = False
+            snippet = ''
+            ext = os.path.splitext(fname)[1].lower()
+            if ext in TEXT_EXT:
+                try:
+                    with open(full, 'r', encoding='utf-8', errors='ignore') as f:
+                        text = f.read(512_000)  # 最大500KB
+                    idx = text.lower().find(q_lower)
+                    if idx >= 0:
+                        content_match = True
+                        start = max(0, idx - 40)
+                        end = min(len(text), idx + len(q) + 40)
+                        snippet = ('…' if start > 0 else '') + text[start:end] + ('…' if end < len(text) else '')
+                except Exception:
+                    pass
+
+            if name_match or content_match:
+                is_file = os.path.isfile(full)
+                results.append({
+                    'path': rel,
+                    'name': fname,
+                    'type': 'file' if is_file else 'folder',
+                    'nameMatch': name_match,
+                    'contentMatch': content_match,
+                    'snippet': snippet,
+                })
+            if len(results) >= 100:
+                break
+        if len(results) >= 100:
+            break
+
+    return jsonify({'ok': True, 'results': results})
+
+# --- 一括ZIP ---
+@app.route('/download-multi', methods=['POST'])
+def download_multi():
+    data = request.get_json(silent=True) or {}
+    paths = data.get('paths', [])
+    if not paths:
+        return 'No files selected', 400
+
+    memory_file = io.BytesIO()
+    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for p in paths:
+            full = safe_path(p)
+            if os.path.isfile(full):
+                zf.write(full, arcname=os.path.basename(full))
+            elif os.path.isdir(full):
+                base = os.path.basename(full.rstrip("/\\"))
+                for root, _, files in os.walk(full):
+                    for fname in files:
+                        abs_f = os.path.join(root, fname)
+                        arc = os.path.join(base, os.path.relpath(abs_f, full))
+                        zf.write(abs_f, arcname=arc)
+    memory_file.seek(0)
+    return send_file(memory_file, download_name="selected.zip", as_attachment=True)
+
+# --- 一括削除 ---
+@app.route('/delete-multi', methods=['POST'])
+def delete_multi():
+    data = request.get_json(silent=True) or {}
+    paths = data.get('paths', [])
+    if not paths:
+        return jsonify({'ok': False, 'error': 'no paths'}), 400
+
+    errors = []
+    for p in paths:
+        if not p:
+            continue
+        target = safe_path(p)
+        if not os.path.exists(target):
+            continue
+        try:
+            if os.path.isfile(target):
+                os.remove(target)
+            else:
+                shutil.rmtree(target)
+        except Exception as e:
+            errors.append(f'{p}: {e}')
+
+    if errors:
+        return jsonify({'ok': False, 'error': '; '.join(errors)}), 500
+    return jsonify({'ok': True})
+
+# --- お気に入り（IPアドレスごとに管理） ---
+FAVS_DIR = os.path.join(APP_ROOT, '.favs')
+os.makedirs(FAVS_DIR, exist_ok=True)
+
+def _get_client_ip():
+    """プロキシ経由でも正しいIPを取得"""
+    return request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
+
+def _favs_file(ip):
+    safe_ip = ip.replace(':', '_')  # IPv6対策
+    return os.path.join(FAVS_DIR, f'{safe_ip}.json')
+
+def _load_favs(ip):
+    path = _favs_file(ip)
+    if os.path.isfile(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+def _save_favs(ip, favs):
+    with open(_favs_file(ip), 'w', encoding='utf-8') as f:
+        json.dump(favs, f, ensure_ascii=False, indent=1)
+
+@app.route('/api/favs', methods=['GET'])
+def get_favs():
+    ip = _get_client_ip()
+    return jsonify({'ok': True, 'favs': _load_favs(ip), 'ip': ip})
+
+@app.route('/api/favs', methods=['POST'])
+def add_fav():
+    ip = _get_client_ip()
+    data = request.get_json(silent=True) or {}
+    path = data.get('path', '').strip()
+    name = data.get('name', '').strip()
+    ftype = data.get('type', 'file')
+    if not path:
+        return jsonify({'ok': False, 'error': 'missing path'}), 400
+
+    favs = _load_favs(ip)
+    if any(f['path'] == path for f in favs):
+        return jsonify({'ok': True, 'favs': favs})
+    favs.append({'path': path, 'name': name, 'type': ftype})
+    _save_favs(ip, favs)
+    return jsonify({'ok': True, 'favs': favs})
+
+@app.route('/api/favs', methods=['DELETE'])
+def remove_fav():
+    ip = _get_client_ip()
+    data = request.get_json(silent=True) or {}
+    path = data.get('path', '').strip()
+    if not path:
+        return jsonify({'ok': False, 'error': 'missing path'}), 400
+
+    favs = _load_favs(ip)
+    favs = [f for f in favs if f['path'] != path]
+    _save_favs(ip, favs)
+    return jsonify({'ok': True, 'favs': favs})
+
+# --- サーバー情報（QRコード用） ---
+@app.route('/server-info')
+def server_info():
+    import socket
+    hostname = socket.gethostname()
+    try:
+        ip = socket.gethostbyname(hostname)
+    except Exception:
+        ip = '127.0.0.1'
+    return jsonify({'ip': ip, 'port': 5000, 'url': f'http://{ip}:5000'})
+
 if __name__ == '__main__':
     os.makedirs(BASE_DIR, exist_ok=True)
     app.run(host='0.0.0.0', port=5000, debug=True)
