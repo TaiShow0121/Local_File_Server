@@ -83,6 +83,13 @@ def folder_size(path):
                 pass
     return total
 
+
+def is_same_or_child_path(parent: str, child: str) -> bool:
+    try:
+        return os.path.commonpath([parent, child]) == parent
+    except ValueError:
+        return False
+
 # --- routes ---
 @app.route('/', defaults={'subpath': ''})
 @app.route('/browse/', defaults={'subpath': ''})
@@ -116,6 +123,7 @@ def browse(subpath):
             'path': rel_path.replace('\\', '/'),
             'type': etype,
             'size': human_size(size),
+            'size_bytes': size,
             'mtime': mtime_str,            # ★追加
         })
 
@@ -313,6 +321,47 @@ def rename_path():
     try:
         os.rename(old_full, new_full)
         return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# --- 移動（ドラッグ＆ドロップ用） ---
+@app.route('/move', methods=['POST'])
+def move_path():
+    data = request.get_json(silent=True) or {}
+    source_subpath = unquote(data.get('sourcePath', '')).strip()
+    target_dir_subpath = unquote(data.get('targetDir', '')).strip()
+
+    if not source_subpath:
+        return jsonify({'ok': False, 'error': 'missing source path'}), 400
+
+    source_full = safe_path(source_subpath)
+    target_dir_full = safe_path(target_dir_subpath) if target_dir_subpath else BASE_DIR
+
+    if source_full == BASE_DIR:
+        return jsonify({'ok': False, 'error': 'root move is not allowed'}), 400
+    if not os.path.exists(source_full):
+        return jsonify({'ok': False, 'error': 'source not found'}), 404
+    if not os.path.isdir(target_dir_full):
+        return jsonify({'ok': False, 'error': 'target folder not found'}), 404
+    if os.path.dirname(source_full) == target_dir_full:
+        return jsonify({'ok': False, 'error': 'already in this folder'}), 400
+
+    if os.path.isdir(source_full) and is_same_or_child_path(source_full, target_dir_full):
+        return jsonify({'ok': False, 'error': 'cannot move a folder into itself'}), 400
+
+    destination_full = os.path.abspath(
+        os.path.join(target_dir_full, os.path.basename(source_full.rstrip('/\\')))
+    )
+    if not destination_full.startswith(BASE_DIR):
+        return jsonify({'ok': False, 'error': 'forbidden'}), 403
+    if os.path.exists(destination_full):
+        return jsonify({'ok': False, 'error': 'same name already exists'}), 409
+
+    try:
+        shutil.move(source_full, destination_full)
+        new_rel_path = os.path.relpath(destination_full, BASE_DIR).replace('\\', '/')
+        return jsonify({'ok': True, 'newPath': new_rel_path})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
 
