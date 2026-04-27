@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>受け取り専用 - {{ app_settings.workspace_name }}</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f766e'/%3E%3Cpath d='M14 24h14l4 5h18v19H14z' fill='%23fff' opacity='.9'/%3E%3Cpath d='M14 20h16l4 5h16v6H14z' fill='%23cffafe'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      --bg: #eef3f6;
+      --card: #ffffff;
+      --ink: #0f172a;
+      --muted: #64748b;
+      --border: #dbe3ea;
+      --brand: #0f766e;
+      --brand-2: #0e7490;
+      --danger: #dc2626;
+      --ok: #059669;
+      font-family: Inter, "Segoe UI", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      display: grid;
+      place-items: center;
+      padding: 18px;
+    }
+    .shell {
+      width: min(680px, 100%);
+      display: grid;
+      gap: 14px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo {
+      width: 54px;
+      height: 54px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: linear-gradient(135deg, var(--brand), var(--brand-2));
+      box-shadow: 0 16px 34px rgba(15, 118, 110, .18);
+      font-size: 24px;
+    }
+    .brand strong {
+      display: block;
+      font-size: 22px;
+      line-height: 1.1;
+    }
+    .brand span {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 16px 42px rgba(15, 23, 42, .08);
+      padding: 18px;
+    }
+    .drop {
+      display: grid;
+      place-items: center;
+      gap: 12px;
+      min-height: 260px;
+      border: 2px dashed color-mix(in srgb, var(--brand) 38%, var(--border));
+      border-radius: 14px;
+      background: color-mix(in srgb, var(--brand) 6%, #fff);
+      text-align: center;
+      padding: 26px 18px;
+      transition: .16s ease;
+    }
+    .drop.dragover {
+      transform: translateY(-2px);
+      border-color: var(--brand);
+      background: color-mix(in srgb, var(--brand) 12%, #fff);
+    }
+    .drop-icon {
+      width: 82px;
+      height: 82px;
+      border-radius: 22px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: linear-gradient(135deg, var(--brand), var(--brand-2));
+      font-size: 36px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.15;
+    }
+    p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.65;
+      font-weight: 600;
+    }
+    .btn {
+      border: 1px solid transparent;
+      border-radius: 10px;
+      min-height: 46px;
+      padding: 0 18px;
+      font: inherit;
+      font-weight: 900;
+      cursor: pointer;
+      color: #fff;
+      background: linear-gradient(135deg, var(--brand), var(--brand-2));
+      box-shadow: 0 12px 24px rgba(15, 118, 110, .2);
+    }
+    .btn:disabled {
+      opacity: .6;
+      cursor: wait;
+    }
+    .meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .pill {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 900;
+    }
+    .progress {
+      display: none;
+      height: 10px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #dbe3ea;
+    }
+    .bar {
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--brand), var(--brand-2));
+      transition: width .18s ease;
+    }
+    .status {
+      min-height: 22px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .status.ok { color: var(--ok); }
+    .status.error { color: var(--danger); }
+    .list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .list li {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: #fff;
+      color: var(--ink);
+      font-weight: 800;
+      min-width: 0;
+    }
+    .list span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .list small {
+      flex-shrink: 0;
+      color: var(--muted);
+      font-weight: 800;
+    }
+    @media (max-width: 560px) {
+      body { padding: 14px; align-items: start; }
+      .brand strong { font-size: 20px; }
+      h1 { font-size: 24px; }
+      .drop { min-height: 300px; }
+      .btn { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="brand">
+      <div class="logo">&#128229;</div>
+      <div>
+        <strong>{{ app_settings.workspace_name }}</strong>
+        <span>受け取り専用モード</span>
+      </div>
+    </div>
+
+    <section class="card">
+      <div class="drop" id="drop-zone">
+        <div class="drop-icon">&#128229;</div>
+        <h1>このPCへアップロード</h1>
+        <p>ファイルを選ぶか、この枠にドラッグしてください。保存先: {{ location_label }}</p>
+        <button class="btn" id="pick-btn" type="button">ファイルを選ぶ</button>
+        <input id="file-input" type="file" multiple hidden>
+      </div>
+    </section>
+
+    <div class="meta">
+      <span class="pill">保存先 {{ location_label }}</span>
+      <span class="pill">上限 {{ app_settings.upload_limit_mb }}MB</span>
+      <span class="pill">{{ '共有キーON' if app_settings.share_key_enabled else '共有キーOFF' }}</span>
+    </div>
+
+    <div class="progress" id="progress"><div class="bar" id="bar"></div></div>
+    <div class="status" id="status">待機中</div>
+    <ul class="list" id="recent-list"></ul>
+  </main>
+
+  <script>
+    const subpath = {{ subpath | tojson }};
+    const settings = {{ app_settings | tojson }};
+    const dropZone = document.getElementById('drop-zone');
+    const input = document.getElementById('file-input');
+    const pickBtn = document.getElementById('pick-btn');
+    const progress = document.getElementById('progress');
+    const bar = document.getElementById('bar');
+    const statusEl = document.getElementById('status');
+    const recentList = document.getElementById('recent-list');
+
+    function uploadUrl() {
+      const encoded = (subpath || '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
+      return encoded ? `/upload/${encoded}` : '/upload/';
+    }
+
+    function formatBytes(bytes) {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+      return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+    }
+
+    function setStatus(text, kind = '') {
+      statusEl.textContent = text;
+      statusEl.className = `status ${kind}`;
+    }
+
+    function addRecent(files) {
+      [...files].slice(0, 8).forEach(file => {
+        const item = document.createElement('li');
+        item.innerHTML = `<span>${file.name}</span><small>${formatBytes(file.size)}</small>`;
+        recentList.prepend(item);
+      });
+      while (recentList.children.length > 10) recentList.lastChild.remove();
+    }
+
+    async function uploadFiles(files) {
+      if (!files || !files.length) return;
+      const list = [...files];
+      const total = list.reduce((sum, file) => sum + file.size, 0);
+      const limit = Number(settings.upload_limit_mb || 0) * 1024 * 1024;
+      if (limit > 0 && total > limit) {
+        setStatus(`上限を超えています。上限 ${settings.upload_limit_mb}MB / 選択 ${formatBytes(total)}`, 'error');
+        return;
+      }
+      const form = new FormData();
+      list.forEach(file => form.append('file', file, file.webkitRelativePath || file.name));
+      pickBtn.disabled = true;
+      progress.style.display = 'block';
+      bar.style.width = '0%';
+      setStatus(`${list.length}件をアップロード中...`);
+
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', uploadUrl());
+        xhr.upload.onprogress = (event) => {
+          if (!event.lengthComputable) return;
+          const pct = Math.round((event.loaded / event.total) * 100);
+          bar.style.width = `${pct}%`;
+          setStatus(`${pct}%  ${formatBytes(event.loaded)} / ${formatBytes(event.total)}`);
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error(xhr.responseText || `${xhr.status} ${xhr.statusText}`));
+        };
+        xhr.onerror = () => reject(new Error('ネットワークエラー'));
+        xhr.send(form);
+      }).then(() => {
+        bar.style.width = '100%';
+        setStatus(`${list.length}件を受け取りました`, 'ok');
+        addRecent(list);
+      }).catch(error => {
+        setStatus(error.message || 'アップロードに失敗しました', 'error');
+      }).finally(() => {
+        pickBtn.disabled = false;
+        input.value = '';
+      });
+    }
+
+    pickBtn.addEventListener('click', () => input.click());
+    input.addEventListener('change', () => uploadFiles(input.files));
+    ['dragenter', 'dragover'].forEach(type => {
+      dropZone.addEventListener(type, event => {
+        event.preventDefault();
+        dropZone.classList.add('dragover');
+      });
+    });
+    ['dragleave', 'drop'].forEach(type => {
+      dropZone.addEventListener(type, event => {
+        event.preventDefault();
+        dropZone.classList.remove('dragover');
+      });
+    });
+    dropZone.addEventListener('drop', event => uploadFiles(event.dataTransfer.files));
+  </script>
+</body>
+</html>

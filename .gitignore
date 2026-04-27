@@ -1,1 +1,15 @@
-./files/*
+files/**
+!files/.gitkeep
+
+__pycache__/
+*.py[cod]
+
+.state/
+.history/
+.trash/
+.favs/
+.ui-backups/
+
+build/
+dist/
+*.spec
