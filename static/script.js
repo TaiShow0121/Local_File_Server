@@ -22,6 +22,8 @@ function applyStoredTheme() {
 /* ========= View Toggle (List / Grid) ========= */
 let currentView = localStorage.getItem('viewMode') || 'list';
 let commandDeckVisible = localStorage.getItem('commandDeckVisible') !== 'hidden';
+const MARKDOWN_EDITOR_MODES = ['edit', 'preview', 'split'];
+let markdownEditorMode = localStorage.getItem('markdownEditorMode') || 'edit';
 const INTERNAL_ENTRY_MIME = 'application/x-local-file-server-entry';
 let activeDraggedEntry = null;
 let remoteCursorData = {};
@@ -107,7 +109,11 @@ function setEditorValue(value) {
   const area = getEditorArea();
   if (!area) return;
   area.value = value;
-  syncHighlightedCode(liveEditPath);
+  const activePath = liveEditPath || currentPreviewPath || '';
+  updateLineNumbers();
+  syncLineNumberScroll();
+  if (isMarkdownFile(activePath)) updateMdLivePreview(activePath);
+  else syncHighlightedCode(activePath);
 }
 
 function getEditorSelection() {
@@ -670,7 +676,7 @@ function showEmptyPreview() {
   const el = document.getElementById('preview');
   currentPreviewPath = '';
   document.querySelectorAll('.file-entry').forEach(e => e.classList.remove('selected'));
-  el.classList.remove('md-body');
+  el.classList.remove('md-body', 'editor-view');
   el.style.padding = '';
   el.innerHTML = `<div class="empty-state">
     <div class="empty-icon">&#128065;</div>
@@ -686,6 +692,7 @@ function previewFile(path) {
   addPreviewTab(path);
   const el = document.getElementById('preview');
   currentPreviewPath = path;
+  el.classList.remove('editor-view');
   updatePreviewHeader(path);
   updateProDashboard();
   const pathExpr = encodedPathExpr(path);
@@ -1220,16 +1227,46 @@ function isMarkdownFile(path) {
   return ['md','markdown','mdown','mkd','mkdown'].includes(ext);
 }
 
+function getMarkdownEditorMode() {
+  return MARKDOWN_EDITOR_MODES.includes(markdownEditorMode) ? markdownEditorMode : 'edit';
+}
+
+function setMarkdownEditorMode(mode, path = liveEditPath || currentPreviewPath || '') {
+  const nextMode = MARKDOWN_EDITOR_MODES.includes(mode) ? mode : 'edit';
+  markdownEditorMode = nextMode;
+  localStorage.setItem('markdownEditorMode', nextMode);
+
+  const split = document.getElementById('editor-split');
+  if (split) split.dataset.mdMode = nextMode;
+
+  document.querySelectorAll('.editor-mode-btn').forEach((btn) => {
+    const active = btn.dataset.mode === nextMode;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+
+  if (nextMode !== 'edit') updateMdLivePreview(path);
+  requestAnimationFrame(() => {
+    syncLineNumberScroll();
+    refreshRemoteCursors();
+    if (nextMode !== 'preview') getEditorArea()?.focus({ preventScroll: true });
+  });
+}
+
 function updateLineNumbers() {
   const area = getEditorArea();
   const gutter = document.getElementById('line-numbers');
   if (!area || !gutter) return;
   const lines = area.value.split('\n').length;
   const current = gutter.children.length;
-  if (lines === current) return;
+  if (lines === current) {
+    syncLineNumberScroll();
+    return;
+  }
   let html = '';
   for (let i = 1; i <= lines; i++) html += `<div>${i}</div>`;
   gutter.innerHTML = html;
+  syncLineNumberScroll();
 }
 
 function syncLineNumberScroll() {
@@ -1258,6 +1295,9 @@ function updateMdLivePreview(path) {
 let editorSearchState = { matches: [], index: -1 };
 
 function toggleEditorSearch() {
+  if (isMarkdownFile(liveEditPath || currentPreviewPath || '') && getMarkdownEditorMode() === 'preview') {
+    setMarkdownEditorMode('edit', liveEditPath || currentPreviewPath);
+  }
   const bar = document.getElementById('editor-search-bar');
   if (!bar) return;
   const visible = bar.classList.toggle('visible');
@@ -1317,6 +1357,7 @@ function selectEditorMatch() {
   const lineNum = text.split('\n').length;
   const lineHeight = parseFloat(getComputedStyle(area).lineHeight) || 20;
   area.scrollTop = Math.max(0, (lineNum - 5) * lineHeight);
+  syncLineNumberScroll();
 }
 
 function doEditorReplace() {
@@ -1328,8 +1369,9 @@ function doEditorReplace() {
   const pos = editorSearchState.matches[editorSearchState.index];
   area.value = area.value.substring(0, pos) + replacement + area.value.substring(pos + query.length);
   editorDirty = true;
-  syncHighlightedCode(liveEditPath);
   updateLineNumbers();
+  if (isMarkdownFile(liveEditPath || currentPreviewPath || '')) updateMdLivePreview(liveEditPath || currentPreviewPath);
+  else syncHighlightedCode(liveEditPath);
   broadcastChange(liveEditPath);
   doEditorSearch();
 }
@@ -1343,8 +1385,9 @@ function doEditorReplaceAll() {
   const regex = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
   area.value = area.value.replace(regex, replacement);
   editorDirty = true;
-  syncHighlightedCode(liveEditPath);
   updateLineNumbers();
+  if (isMarkdownFile(liveEditPath || currentPreviewPath || '')) updateMdLivePreview(liveEditPath || currentPreviewPath);
+  else syncHighlightedCode(liveEditPath);
   broadcastChange(liveEditPath);
   doEditorSearch();
 }
@@ -1352,6 +1395,7 @@ function doEditorReplaceAll() {
 function editFile(path) {
   const el = document.getElementById('preview');
   el.classList.remove('md-body');
+  el.classList.add('editor-view');
   currentPreviewPath = path;
   currentEditLock = null;
   editorDirty = false;
@@ -1365,11 +1409,19 @@ function editFile(path) {
       el.style.padding = '.5rem';
 
       const rightPanel = isMd
-        ? `<div id="md-live-preview" class="md-live-preview md-body"></div>`
+        ? `<div id="md-live-preview" class="md-live-preview md-body" aria-label="Markdownプレビュー"></div>`
         : `<div class="code-highlight-wrap">
             <div class="code-highlight-head">シンタックスハイライト</div>
             <pre id="code-highlight-shell" class="code-highlight-shell"><code id="code-highlight" class="hljs"></code></pre>
           </div>`;
+      const mdMode = getMarkdownEditorMode();
+      const mdModeControls = isMd
+        ? `<div class="editor-mode-toolbar" role="group" aria-label="Markdown表示切替">
+            <button type="button" class="editor-mode-btn" data-mode="edit" aria-pressed="false" onclick="setMarkdownEditorMode('edit', ${pathExpr})">編集</button>
+            <button type="button" class="editor-mode-btn" data-mode="preview" aria-pressed="false" onclick="setMarkdownEditorMode('preview', ${pathExpr})">プレビュー</button>
+            <button type="button" class="editor-mode-btn" data-mode="split" aria-pressed="false" onclick="setMarkdownEditorMode('split', ${pathExpr})">分割</button>
+          </div>`
+        : '';
 
       el.innerHTML = `
         <div style="display:flex;gap:.5rem;margin-bottom:.25rem;align-items:center;flex-wrap:wrap;">
@@ -1377,6 +1429,7 @@ function editFile(path) {
           <button class="btn btn-sm" onclick="openDiffViewer(${pathExpr})">\u0394 差分</button>
           <button class="btn btn-sm" onclick="openHistoryModal(${pathExpr})">\uD83D\uDCDC 履歴</button>
           <button class="btn btn-sm" onclick="toggleEditorSearch()">\uD83D\uDD0D 検索</button>
+          ${mdModeControls}
           <button class="btn btn-sm" id="edit-lock-btn" onclick="toggleEditLock()">ロック取得</button>
           <button class="btn btn-sm" onclick="leaveEditRoom(); previewFile(${pathExpr})">キャンセル</button>
           <span id="save-status" style="font-size:.85rem;color:var(--text-secondary);"></span>
@@ -1398,16 +1451,16 @@ function editFile(path) {
           <button class="btn btn-sm btn-ghost" onclick="toggleEditorSearch()">\u2715</button>
         </div>
         <div id="remote-cursors-bar" style="display:flex;gap:6px;flex-wrap:wrap;min-height:18px;margin-bottom:2px;"></div>
-        <div class="editor-split">
-          <div style="position:relative;">
+        <div id="editor-split" class="editor-split${isMd ? ' md-editor-split' : ''}"${isMd ? ` data-md-mode="${mdMode}"` : ''}>
+          <div class="editor-main-panel">
             <div id="cursor-overlay-container" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:hidden;z-index:5;"></div>
             <div class="editor-container">
               <div class="line-numbers" id="line-numbers"></div>
-              <textarea id="edit-area" style="width:100%;height:calc(100vh - 280px);min-height:400px;
+              <textarea id="edit-area" wrap="off" spellcheck="false" style="width:100%;height:100%;
               font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
               font-size:.9rem;background:var(--code-bg);color:var(--text);
               border:1px solid var(--border);padding:.75rem;
-              resize:vertical;tab-size:2;line-height:1.6;">${escapeHtml(data.content || '')}</textarea>
+              resize:none;tab-size:2;line-height:1.6;white-space:pre;">${escapeHtml(data.content || '')}</textarea>
             </div>
           </div>
           ${rightPanel}
@@ -1420,7 +1473,10 @@ function editFile(path) {
       document.getElementById('save-btn').disabled = true;
       updateLineNumbers();
       if (!isMd) syncHighlightedCode(path);
-      if (isMd) updateMdLivePreview(path);
+      if (isMd) {
+        updateMdLivePreview(path);
+        setMarkdownEditorMode(mdMode, path);
+      }
 
       area.addEventListener('input', () => {
         editorDirty = true;
@@ -3062,7 +3118,7 @@ function fileBadgeLabel(file) {
 function renderInboxItems(files, options = {}) {
   const items = (files || []).slice(0, options.limit || (files || []).length);
   if (!items.length) {
-    return `<div class="inbox-empty">${escapeHtml(options.emptyText || 'まだ受信ファイルがありません')}</div>`;
+    return `<div class="inbox-empty">${escapeHtml(options.emptyText || 'まだ受付ファイルがありません')}</div>`;
   }
   return items.map(file => {
     const pe = encodedPathExpr(file.path);
@@ -3093,20 +3149,20 @@ function updateDashboardFromServer(data) {
   const inboxSummaryEl = document.getElementById('dashboard-inbox-summary');
 
   if (todayEl) todayEl.textContent = `${dashboardState.today_files || 0}件`;
-  if (todayDetailEl) todayDetailEl.textContent = `${dashboardState.today_size_h || '0 B'} / 今日追加`;
+  if (todayDetailEl) todayDetailEl.textContent = `${dashboardState.today_size_h || '0 B'} / 本日追加`;
   if (sharesEl) sharesEl.textContent = `${dashboardState.active_share_links || 0}件`;
   if (sharesDetailEl) {
-    sharesDetailEl.textContent = `${dashboardState.share_link_expire_hours || appSettings.share_link_expire_hours || 72}時間で期限切れ`;
+    sharesDetailEl.textContent = `${dashboardState.share_link_expire_hours || appSettings.share_link_expire_hours || 72}時間で自動期限切れ`;
   }
   if (inboxEl) {
     inboxEl.innerHTML = renderInboxItems(dashboardState.recent_files || [], {
-      emptyText: 'スマホや別PCから受信するとここに並びます',
+      emptyText: '受付QRから届いたファイルがここに並びます',
       limit: 2,
     });
   }
   if (inboxSummaryEl) {
     const count = Math.min(dashboardState.recent_files?.length || 0, 2);
-    inboxSummaryEl.textContent = count ? `最近の${count}件を表示` : '最近届いたファイル';
+    inboxSummaryEl.textContent = count ? `直近${count}件を表示` : '直近の受付ファイル';
   }
 }
 
@@ -3126,8 +3182,8 @@ async function openInboxPanel() {
   const body = document.getElementById('side-panel-body');
   const title = document.getElementById('side-panel-title');
   if (!panel || !body || !title) return;
-  title.textContent = '\uD83D\uDCE5 受信箱';
-  body.innerHTML = '<div style="padding:1rem;color:var(--text-secondary);">受信箱を読み込み中...</div>';
+  title.textContent = '\uD83D\uDCE5 受信トレイ';
+  body.innerHTML = '<div style="padding:1rem;color:var(--text-secondary);">受信トレイを読み込み中...</div>';
   panel.classList.add('active');
 
   try {
@@ -3137,11 +3193,11 @@ async function openInboxPanel() {
     const files = data.dashboard?.recent_files || [];
     updateDashboardFromServer(data.dashboard || {});
     body.innerHTML = files.length
-      ? renderInboxItems(files, { emptyText: '受信ファイルがありません' })
-      : '<div style="padding:1rem;color:var(--text-secondary);">受信ファイルがありません</div>';
+      ? renderInboxItems(files, { emptyText: '受付ファイルがありません' })
+      : '<div style="padding:1rem;color:var(--text-secondary);">受付ファイルがありません</div>';
   } catch (e) {
     console.error(e);
-    body.innerHTML = '<div style="padding:1rem;color:var(--danger);">受信箱を読み込めませんでした</div>';
+    body.innerHTML = '<div style="padding:1rem;color:var(--danger);">受信トレイを読み込めませんでした</div>';
   }
 }
 

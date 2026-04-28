@@ -452,6 +452,7 @@
     }
     #preview img, #preview video, #preview audio, #preview iframe { max-width: 100%; }
     #preview.has-tabs { border-radius: 0; }
+    #preview.editor-view { white-space: normal; }
 
     /* ===== Preview Tabs ===== */
     .preview-tabs {
@@ -765,15 +766,19 @@
 
     /* ===== Editor ===== */
     .editor-split { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(260px, .9fr); gap: .5rem; align-items: stretch; }
-    .editor-container { display: flex; position: relative; flex: 1; min-height: 0; }
+    .editor-main-panel { position: relative; min-width: 0; }
+    .editor-container { display: flex; position: relative; flex: 1; min-height: 0; height: clamp(400px, calc(100vh - 280px), 70vh); }
     .line-numbers {
-      width: 44px; padding: .65rem .3rem .65rem 0; background: var(--bg);
+      box-sizing: border-box; width: 44px; height: 100%; padding: .75rem .3rem .75rem 0; background: var(--bg);
       border: 1px solid var(--border); border-right: none; border-radius: 7px 0 0 7px;
       color: var(--text-muted); font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-      font-size: .85rem; line-height: 1.6; text-align: right; overflow: hidden; user-select: none; flex-shrink: 0;
+      font-size: .9rem; line-height: 1.6; text-align: right; overflow: hidden; user-select: none; flex-shrink: 0;
     }
-    .line-numbers div { padding-right: .4rem; }
-    .editor-container #edit-area { border-radius: 0 7px 7px 0; }
+    .line-numbers div { min-height: 1.6em; padding-right: .4rem; }
+    .editor-container #edit-area {
+      box-sizing: border-box; height: 100% !important; min-height: 0 !important;
+      overflow: auto; resize: none; white-space: pre; border-radius: 0 7px 7px 0;
+    }
     .code-highlight-wrap { min-height: 380px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--code-bg); display: flex; flex-direction: column; }
     .code-highlight-head { padding: .45rem .65rem; font-size: .76rem; font-weight: 600; color: var(--text-secondary); border-bottom: 1px solid var(--border); background: var(--bg); }
     .code-highlight-shell { margin: 0; flex: 1; overflow: auto; padding: .65rem; font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size: .84rem; line-height: 1.6; white-space: pre; }
@@ -792,7 +797,31 @@
     .editor-search-bar .search-count { font-size: .7rem; color: var(--text-muted); white-space: nowrap; }
 
     /* ===== Markdown Live Preview ===== */
-    .md-live-preview { flex: 1; overflow: auto; padding: .75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); min-height: 380px; }
+    .editor-mode-toolbar {
+      display: inline-flex; align-items: center; gap: .18rem; padding: .14rem;
+      border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary);
+    }
+    .editor-mode-btn {
+      border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary);
+      cursor: pointer; font: inherit; font-size: .74rem; font-weight: 800; padding: .26rem .52rem; white-space: nowrap;
+    }
+    .editor-mode-btn:hover { background: var(--bg-hover); color: var(--text); }
+    .editor-mode-btn.active {
+      background: var(--card-bg); color: var(--text);
+      box-shadow: 0 1px 2px rgba(15, 23, 42, .08);
+    }
+    .editor-split.md-editor-split { grid-template-columns: minmax(0, 1fr); }
+    .editor-split.md-editor-split[data-md-mode="split"] { grid-template-columns: minmax(0, 1.05fr) minmax(280px, .95fr); }
+    .editor-split.md-editor-split[data-md-mode="preview"] { grid-template-columns: minmax(0, 1fr); }
+    .editor-split.md-editor-split[data-md-mode="preview"] .editor-main-panel { display: none; }
+    .editor-split.md-editor-split[data-md-mode="edit"] .md-live-preview { display: none; }
+    .editor-split.md-editor-split[data-md-mode="preview"] .md-live-preview,
+    .editor-split.md-editor-split[data-md-mode="split"] .md-live-preview { display: block; }
+    .md-live-preview {
+      box-sizing: border-box; flex: 1; overflow: auto; padding: .85rem;
+      border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg);
+      height: clamp(400px, calc(100vh - 280px), 70vh); min-height: 0; white-space: normal;
+    }
 
     /* ===== Storage Indicator ===== */
     .storage-indicator { display: flex; align-items: center; gap: .35rem; padding: .3rem .55rem !important; cursor: default; }
@@ -822,6 +851,10 @@
       .toolbar2 { padding: .3rem .5rem; }
       .toolbar2 .hide-mobile { display: none; }
       .editor-split, .history-layout, .image-editor-layout, .compare-form { grid-template-columns: 1fr; }
+      .editor-split.md-editor-split[data-md-mode="split"] { grid-template-columns: 1fr; }
+      .editor-container, .md-live-preview { height: min(62vh, 520px); }
+      .editor-mode-toolbar { width: 100%; overflow-x: auto; }
+      .editor-mode-btn { flex: 1; text-align: center; }
       .chat-drawer { right: .4rem; left: .4rem; width: auto; bottom: .4rem; }
     }
 
@@ -1763,7 +1796,7 @@
     <details class="tool-menu hide-mobile">
       <summary class="btn btn-sm btn-ghost">&#9881; ツール</summary>
       <div class="tool-menu-panel">
-        <button class="tool-menu-item" onclick="openInboxPanel(); this.closest('details').removeAttribute('open');">&#x1F4E5; 受信箱</button>
+        <button class="tool-menu-item" onclick="openInboxPanel(); this.closest('details').removeAttribute('open');">&#x1F4E5; 受信トレイ</button>
         <button class="tool-menu-item" onclick="showFavorites(); this.closest('details').removeAttribute('open');">&#x2B50; お気に入り</button>
         <button class="tool-menu-item" onclick="showRecent(); this.closest('details').removeAttribute('open');">&#x1F550; 最近のファイル</button>
         <button class="tool-menu-item" onclick="openTrash(); this.closest('details').removeAttribute('open');">&#x1F5D1; ゴミ箱</button>
@@ -1783,21 +1816,21 @@
     <div class="dashboard-overview">
       <div class="dashboard-head">
         <div class="dashboard-titleblock">
-          <span class="dashboard-kicker">受付ワークスペース</span>
+          <span class="dashboard-kicker">ファイル受付デスク</span>
           <strong id="deck-location">files</strong>
-          <small>LAN内受付中</small>
+          <small>このPCで受け取り中</small>
         </div>
         <div class="dashboard-actions">
-          <button class="btn btn-sm btn-accent" onclick="openReceiveMode()">&#x1F4F1; 受け取りQR</button>
-          <button class="btn btn-sm" onclick="openInboxPanel()">&#x1F4E5; 受信箱</button>
+          <button class="btn btn-sm btn-accent" onclick="openReceiveMode()">&#x1F4F1; 受付QR</button>
+          <button class="btn btn-sm" onclick="openInboxPanel()">&#x1F4E5; 受信トレイ</button>
           <button class="btn btn-sm btn-ghost" onclick="refreshFileList()" title="再読み込み">&#x21BB;</button>
         </div>
       </div>
       <div class="dashboard-metrics">
         <article class="dashboard-stat stat-primary">
-          <span>今日の受信</span>
+          <span>本日の受付</span>
           <strong id="deck-today">--</strong>
-          <small id="deck-today-detail">直近アップロードを集計中</small>
+          <small id="deck-today-detail">本日追加されたファイル</small>
         </article>
         <article class="dashboard-stat">
           <span>保存容量</span>
@@ -1805,35 +1838,35 @@
           <small id="deck-capacity-detail">files/ 使用量</small>
         </article>
         <article class="dashboard-stat">
-          <span>共有リンク</span>
+          <span>共有中リンク</span>
           <strong id="deck-shares">--</strong>
-          <small id="deck-shares-detail">期限つきリンク</small>
+          <small id="deck-shares-detail">期限付きの共有</small>
         </article>
         <article class="dashboard-stat">
-          <span>表示中</span>
+          <span>現在の一覧</span>
           <strong id="deck-visible">--</strong>
           <small id="deck-visible-detail">フォルダ / ファイル</small>
         </article>
         <article class="dashboard-stat stat-selected" id="deck-selected-card">
-          <span>選択 / プレビュー</span>
+          <span>選択中</span>
           <strong id="deck-selected" data-preview="未選択">0件</strong>
           <small id="deck-preview">未選択</small>
         </article>
       </div>
     </div>
-    <aside class="inbox-widget" aria-label="受信箱">
+    <aside class="inbox-widget" aria-label="受信トレイ">
       <div class="inbox-widget-header">
         <div class="inbox-widget-title">
-          <strong>受信箱</strong>
-          <span id="dashboard-inbox-summary">最近届いたファイル</span>
+          <strong>受信トレイ</strong>
+          <span id="dashboard-inbox-summary">直近の受付ファイル</span>
         </div>
         <div class="pane-actions">
-          <button class="btn btn-sm btn-ghost" onclick="openReceiveMode()" title="受け取りQR">&#x1F4F1;</button>
-          <button class="btn btn-sm btn-ghost" onclick="openInboxPanel()" title="受信箱を開く">&#x2197;</button>
+          <button class="btn btn-sm btn-ghost" onclick="openReceiveMode()" title="受付QR">&#x1F4F1;</button>
+          <button class="btn btn-sm btn-ghost" onclick="openInboxPanel()" title="受信トレイを開く">&#x2197;</button>
         </div>
       </div>
       <div class="dashboard-inbox-list" id="dashboard-inbox-list">
-        <div class="inbox-empty">受信ファイルを読み込み中...</div>
+        <div class="inbox-empty">受付ファイルを読み込み中...</div>
       </div>
     </aside>
   </section>
