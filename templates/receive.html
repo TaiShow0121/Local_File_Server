@@ -201,22 +201,23 @@
       <div class="logo">&#128229;</div>
       <div>
         <strong>{{ app_settings.workspace_name }}</strong>
-        <span>受け取り専用モード</span>
+        <span>{{ '受付ボックス' if receive_box else '受け取り専用モード' }}</span>
       </div>
     </div>
 
     <section class="card">
       <div class="drop" id="drop-zone">
         <div class="drop-icon">&#128229;</div>
-        <h1>このPCへアップロード</h1>
-        <p>ファイルを選ぶか、この枠にドラッグしてください。保存先: {{ location_label }}</p>
+        <h1>{{ location_label }} へアップロード</h1>
+        <p>ファイルを選ぶか、この枠にドラッグしてください。保存先: {{ location_path }}</p>
         <button class="btn" id="pick-btn" type="button">ファイルを選ぶ</button>
         <input id="file-input" type="file" multiple hidden>
       </div>
     </section>
 
     <div class="meta">
-      <span class="pill">保存先 {{ location_label }}</span>
+      <span class="pill">保存先 {{ location_path }}</span>
+      {% if receive_box %}<span class="pill">受付ボックス {{ receive_box.name }}</span>{% endif %}
       <span class="pill">上限 {{ app_settings.upload_limit_mb }}MB</span>
       <span class="pill">{{ '共有キーON' if app_settings.share_key_enabled else '共有キーOFF' }}</span>
     </div>

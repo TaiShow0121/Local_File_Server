@@ -1,6 +1,7 @@
 from flask import Flask, render_template, send_file, abort, jsonify, request, url_for, has_request_context, redirect, session
 from flask_socketio import SocketIO, emit, join_room, leave_room
 import os
+import sys
 import zipfile
 import io
 import json
@@ -21,6 +22,14 @@ import secrets
 import socket
 import threading
 
+SOURCE_ROOT = os.path.abspath(os.path.dirname(__file__))
+if getattr(sys, 'frozen', False):
+    BUNDLE_ROOT = getattr(sys, '_MEIPASS', SOURCE_ROOT)
+    APP_ROOT = os.path.abspath(os.path.dirname(sys.executable))
+else:
+    BUNDLE_ROOT = SOURCE_ROOT
+    APP_ROOT = SOURCE_ROOT
+
 try:
     locale.setlocale(locale.LC_COLLATE, 'ja_JP.UTF-8')
     def ja_sort_key(s: str) -> str:
@@ -37,9 +46,14 @@ except locale.Error:
     def ja_sort_key(s: str) -> str:
         return _to_hira(s)
 # ★ 静的/テンプレートパスを明示
-app = Flask(__name__, static_url_path="/static", static_folder="static", template_folder="templates")
+app = Flask(
+    __name__,
+    static_url_path="/static",
+    static_folder=os.path.join(BUNDLE_ROOT, "static"),
+    template_folder=os.path.join(BUNDLE_ROOT, "templates"),
+)
 app.config['MAX_CONTENT_LENGTH'] = 102400 * 1024 * 1024  # 実際の上限はアプリ設定で制御
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 # ファイルI/O競合防止用ロック
 _file_io_lock = threading.Lock()
@@ -52,8 +66,6 @@ EDITOR_COLORS = [
     '#6366f1', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6',
     '#ec4899', '#06b6d4', '#f97316', '#14b8a6', '#e11d64',
 ]
-
-APP_ROOT = os.path.abspath(os.path.dirname(__file__))  # 例: local_server の絶対パス
 
 # 表示ルート
 DEFAULT_STORAGE_DIR = os.path.join(APP_ROOT, 'files')
@@ -78,6 +90,8 @@ SHARE_LINKS_FILE = os.path.join(STATE_DIR, 'share_links.json')
 CHAT_HISTORY_FILE = os.path.join(STATE_DIR, 'chat_history.json')
 APP_SETTINGS_FILE = os.path.join(STATE_DIR, 'app_settings.json')
 APP_SECRET_FILE = os.path.join(STATE_DIR, 'flask_secret.txt')
+RECEIVE_BOXES_FILE = os.path.join(STATE_DIR, 'receive_boxes.json')
+RECEIVE_BOX_ROOT = '受付ボックス'
 chat_messages = []
 share_links = {}  # メモリキャッシュ
 # オンラインユーザー管理: { sid: { 'ip': ..., 'color': ..., 'connected_at': ... } }
@@ -161,6 +175,109 @@ def is_same_or_child_path(parent: str, child: str) -> bool:
 
 def normalize_rel_path(subpath: str) -> str:
     return (subpath or '').replace('\\', '/').strip('/')
+
+def clean_folder_name(name: str, fallback: str = '受付') -> str:
+    invalid = set('<>:"/\\|?*')
+    cleaned = ''.join('_' if ord(ch) < 32 or ch in invalid else ch for ch in (name or '').strip())
+    cleaned = ' '.join(cleaned.split()).strip(' .')
+    return (cleaned or fallback)[:48]
+
+def receive_box_root_path() -> str:
+    root = safe_path(RECEIVE_BOX_ROOT)
+    os.makedirs(root, exist_ok=True)
+    return root
+
+def load_receive_boxes() -> list:
+    if not os.path.isfile(RECEIVE_BOXES_FILE):
+        return []
+    try:
+        with open(RECEIVE_BOXES_FILE, 'r', encoding='utf-8') as f:
+            boxes = json.load(f)
+        if not isinstance(boxes, list):
+            return []
+    except Exception:
+        return []
+    normalized = []
+    for box in boxes:
+        if not isinstance(box, dict):
+            continue
+        path = normalize_rel_path(box.get('path', ''))
+        name = (box.get('name') or os.path.basename(path) or '受付').strip()[:64]
+        if not path:
+            continue
+        normalized.append({
+            'id': str(box.get('id') or secrets.token_urlsafe(8)),
+            'name': name,
+            'path': path,
+            'created_at': str(box.get('created_at') or ''),
+        })
+    return normalized
+
+def save_receive_boxes(boxes: list):
+    with _file_io_lock:
+        with open(RECEIVE_BOXES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(boxes, f, ensure_ascii=False, indent=1)
+
+def unique_receive_box_path(name: str) -> str:
+    receive_box_root_path()
+    base = clean_folder_name(name)
+    root_rel = normalize_rel_path(RECEIVE_BOX_ROOT)
+    candidate = f'{root_rel}/{base}'
+    suffix = 2
+    while os.path.exists(safe_path(candidate)):
+        candidate = f'{root_rel}/{base}-{suffix}'
+        suffix += 1
+    return candidate
+
+def receive_box_metrics(subpath: str) -> dict:
+    try:
+        root = safe_path(subpath)
+    except Exception:
+        return {'file_count': 0, 'today_files': 0, 'total_size': 0, 'total_size_h': '0 B', 'last_received_at': ''}
+    midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    file_count = 0
+    today_files = 0
+    total_size = 0
+    latest_ts = 0
+    if os.path.isdir(root):
+        for current_root, _, files in os.walk(root):
+            for filename in files:
+                full = os.path.join(current_root, filename)
+                try:
+                    stat = os.stat(full)
+                except OSError:
+                    continue
+                file_count += 1
+                total_size += stat.st_size
+                latest_ts = max(latest_ts, stat.st_mtime)
+                if stat.st_mtime >= midnight:
+                    today_files += 1
+    return {
+        'file_count': file_count,
+        'today_files': today_files,
+        'total_size': total_size,
+        'total_size_h': human_size(total_size),
+        'last_received_at': datetime.fromtimestamp(latest_ts).strftime('%Y-%m-%d %H:%M') if latest_ts else '',
+    }
+
+def decorate_receive_box(box: dict) -> dict:
+    decorated = dict(box)
+    decorated.update(receive_box_metrics(box.get('path', '')))
+    return decorated
+
+def list_receive_boxes(limit: int | None = None) -> list:
+    boxes = [decorate_receive_box(box) for box in load_receive_boxes()]
+    boxes.sort(key=lambda box: box.get('created_at', ''), reverse=True)
+    if limit is not None:
+        boxes = boxes[:limit]
+    return boxes
+
+def receive_box_for_path(subpath: str) -> dict | None:
+    normalized = normalize_rel_path(subpath)
+    for box in load_receive_boxes():
+        if normalize_rel_path(box.get('path', '')) == normalized:
+            return box
+    return None
 
 def edit_room_name(file_path: str) -> str:
     return f"edit:{normalize_rel_path(file_path)}"
@@ -736,6 +853,8 @@ def build_dashboard_payload(limit: int = 8) -> dict:
         **metrics,
         'active_share_links': len(active_links),
         'share_link_expire_hours': get_share_link_expire_hours(settings),
+        'receive_boxes': list_receive_boxes(4),
+        'receive_box_count': len(load_receive_boxes()),
         'recent_activity': load_activity_log()[:6],
         'generated_at': current_timestamp(),
     }
@@ -889,6 +1008,10 @@ def api_app_settings():
     settings = save_app_settings(settings)
     return jsonify({'ok': True, 'settings': public_app_settings(settings)})
 
+@app.route('/pro')
+def pro_page():
+    return render_template('pro.html', app_settings=public_app_settings())
+
 @app.route('/', defaults={'subpath': ''})
 @app.route('/browse/', defaults={'subpath': ''})
 @app.route('/browse/<path:subpath>')
@@ -917,10 +1040,14 @@ def receive_mode():
         target = BASE_DIR
     if not os.path.isdir(target):
         subpath = ''
+    box = receive_box_for_path(subpath)
+    location_label = box.get('name') if box else (subpath or 'files')
     return render_template(
         'receive.html',
         subpath=subpath,
-        location_label=subpath or 'files',
+        location_label=location_label,
+        location_path=subpath or 'files',
+        receive_box=box,
         app_settings=public_app_settings(),
     )
 
@@ -1567,6 +1694,49 @@ def api_dashboard():
     except ValueError:
         limit = 8
     return jsonify({'ok': True, 'dashboard': build_dashboard_payload(limit)})
+
+@app.route('/api/receive-boxes', methods=['GET', 'POST'])
+def api_receive_boxes():
+    if request.method == 'GET':
+        try:
+            limit = request.args.get('limit')
+            limit = int(limit) if limit else None
+        except ValueError:
+            limit = None
+        return jsonify({
+            'ok': True,
+            'boxes': list_receive_boxes(limit),
+            'count': len(load_receive_boxes()),
+        })
+
+    data = request.get_json(silent=True) or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({'ok': False, 'error': '受付名を入力してください'}), 400
+
+    try:
+        path = unique_receive_box_path(name)
+        os.makedirs(safe_path(path), exist_ok=False)
+        box = {
+            'id': secrets.token_urlsafe(10),
+            'name': name[:64],
+            'path': path,
+            'created_at': current_timestamp(),
+        }
+        boxes = load_receive_boxes()
+        boxes.insert(0, box)
+        save_receive_boxes(boxes)
+        broadcast_system_notice('receive-box', path, f'{box["name"]} 受付ボックスを作成しました')
+        return jsonify({
+            'ok': True,
+            'box': decorate_receive_box(box),
+            'boxes': list_receive_boxes(8),
+            'count': len(load_receive_boxes()),
+        })
+    except FileExistsError:
+        return jsonify({'ok': False, 'error': '同名の受付ボックスがすでにあります'}), 409
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 @app.route('/api/clipboard', methods=['GET'])
 def api_clipboard_get():

@@ -18,6 +18,7 @@ APP_DIR = Path(__file__).resolve().parent
 APP_FILE = APP_DIR / "app.py"
 SETTINGS_FILE = APP_DIR / ".state" / "app_settings.json"
 DEFAULT_PORT = 5000
+SERVER_EXE_NAME = "LAN Drive Pro Server.exe"
 
 
 class LanDriveLauncher(tk.Tk):
@@ -80,6 +81,17 @@ class LanDriveLauncher(tk.Tk):
             return [py, "-3"]
         return []
 
+    def find_server_executable(self) -> Path | None:
+        candidates = [
+            APP_DIR / SERVER_EXE_NAME,
+            APP_DIR / "dist" / SERVER_EXE_NAME,
+            APP_DIR.parent / SERVER_EXE_NAME,
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return None
+
     def build_ui(self):
         header = tk.Frame(self, bg="#eef3f6")
         header.pack(fill="x", padx=22, pady=(22, 12))
@@ -128,11 +140,17 @@ class LanDriveLauncher(tk.Tk):
             self.url_var.set(self.local_url())
             webbrowser.open(self.local_url())
             return
-        cmd = self.find_python_command()
-        if not cmd:
-            messagebox.showerror("Pythonが見つかりません", "Pythonをインストールするか、server.batから起動してください。")
-            return
-        if not APP_FILE.exists():
+        server_exe = self.find_server_executable()
+        if server_exe:
+            cmd = [str(server_exe)]
+        else:
+            python_cmd = self.find_python_command()
+            if not python_cmd:
+                messagebox.showerror("Pythonが見つかりません", "Pythonをインストールするか、server.batから起動してください。")
+                return
+            cmd = python_cmd + [str(APP_FILE)]
+
+        if not server_exe and not APP_FILE.exists():
             messagebox.showerror("app.pyが見つかりません", str(APP_FILE))
             return
 
@@ -140,7 +158,7 @@ class LanDriveLauncher(tk.Tk):
         env["LAN_DRIVE_DEBUG"] = "0"
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         self.process = subprocess.Popen(
-            cmd + [str(APP_FILE)],
+            cmd,
             cwd=str(APP_DIR),
             env=env,
             stdout=subprocess.DEVNULL,

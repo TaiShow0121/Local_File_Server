@@ -55,7 +55,7 @@ let appSettings = window.__appSettings || {
 };
 let latestShareUrl = '';
 let latestReceiveUrl = '';
-let dashboardState = { recent_files: [] };
+let dashboardState = { recent_files: [], receive_boxes: [] };
 
 const CODE_LANGUAGE_MAP = {
   py: 'python',
@@ -569,6 +569,11 @@ function closeModal(id, force = false) {
 
 function encodedPathExpr(path) {
   return `decodeURIComponent('${encodeURIComponent(path)}')`;
+}
+
+function browseUrlForPath(path) {
+  const encoded = (path || '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
+  return encoded ? `/browse/${encoded}` : '/';
 }
 
 /* ========= Toast Notification ========= */
@@ -1661,7 +1666,7 @@ function handleSystemNotice(data) {
   if (affectedDir === currentDir || data.action === 'upload' || data.action === 'mkdir' || data.action === 'mkfile') {
     refreshFileList();
   }
-  if (['upload', 'delete', 'trash', 'delete-multi', 'trash-multi', 'move', 'move-multi', 'copy', 'rename', 'mkdir', 'mkfile'].includes(data.action)) {
+  if (['upload', 'delete', 'trash', 'delete-multi', 'trash-multi', 'move', 'move-multi', 'copy', 'rename', 'mkdir', 'mkfile', 'receive-box'].includes(data.action)) {
     fetchDashboardInfo();
     fetchStorageInfo();
   }
@@ -2453,15 +2458,20 @@ function copyShareUrl() {
   });
 }
 
-async function openReceiveMode() {
+async function openReceiveMode(targetPath = currentSubpath()) {
   document.getElementById('receive-backdrop').style.display = 'flex';
-  const path = encodeURIComponent(`/receive?path=${encodeURIComponent(currentSubpath())}`);
+  const receivePath = targetPath || '';
+  const path = encodeURIComponent(`/receive?path=${encodeURIComponent(receivePath)}`);
+  const titleEl = document.getElementById('receive-modal-title');
   const urlEl = document.getElementById('receive-url-input');
   const canvas = document.getElementById('receive-qr-canvas');
+  const pathBadge = document.getElementById('receive-path-badge');
   const ipBadge = document.getElementById('receive-ip-badge');
   const limitBadge = document.getElementById('receive-limit-badge');
   const keyBadge = document.getElementById('receive-key-badge');
+  if (titleEl) titleEl.textContent = `受付QR: ${compactPathLabel(receivePath)}`;
   if (urlEl) urlEl.value = '取得中...';
+  if (pathBadge) pathBadge.textContent = `保存先 ${compactPathLabel(receivePath)}`;
   if (ipBadge) ipBadge.textContent = 'IP --';
   if (limitBadge) limitBadge.textContent = '上限確認中';
   if (keyBadge) keyBadge.textContent = '共有キー確認中';
@@ -3139,6 +3149,31 @@ function renderInboxItems(files, options = {}) {
   }).join('');
 }
 
+function renderReceiveBoxes(boxes, options = {}) {
+  const items = (boxes || []).slice(0, options.limit || (boxes || []).length);
+  if (!items.length) {
+    return `<div class="inbox-empty">${escapeHtml(options.emptyText || '受付ボックスはまだありません')}</div>`;
+  }
+  return items.map((box) => {
+    const pe = encodedPathExpr(box.path || '');
+    const name = escapeHtml(box.name || box.path || '受付');
+    const path = escapeHtml(compactPathLabel(box.path || ''));
+    const count = Number(box.file_count || 0);
+    const today = Number(box.today_files || 0);
+    const size = escapeHtml(box.total_size_h || '0 B');
+    const last = box.last_received_at ? ` / ${escapeHtml(box.last_received_at)}` : '';
+    const meta = `${count}件 / ${size}${today ? ` / 本日${today}件` : ''}${last}`;
+    return `<div class="dashboard-box-row">
+      <button class="dashboard-box-main" onclick="location.href=browseUrlForPath(${pe})" title="${escapeHtml(box.path || '')}">
+        <strong>${name}</strong>
+        <span>${path} / ${meta}</span>
+      </button>
+      <button class="dashboard-box-action" onclick="openReceiveMode(${pe})" title="専用QR">QR</button>
+      <button class="dashboard-box-action" onclick="location.href=browseUrlForPath(${pe})" title="開く">&#x2197;</button>
+    </div>`;
+  }).join('');
+}
+
 function updateDashboardFromServer(data) {
   dashboardState = { ...dashboardState, ...(data || {}) };
   const todayEl = document.getElementById('deck-today');
@@ -3147,6 +3182,8 @@ function updateDashboardFromServer(data) {
   const sharesDetailEl = document.getElementById('deck-shares-detail');
   const inboxEl = document.getElementById('dashboard-inbox-list');
   const inboxSummaryEl = document.getElementById('dashboard-inbox-summary');
+  const boxEl = document.getElementById('dashboard-box-list');
+  const boxSummaryEl = document.getElementById('dashboard-box-summary');
 
   if (todayEl) todayEl.textContent = `${dashboardState.today_files || 0}件`;
   if (todayDetailEl) todayDetailEl.textContent = `${dashboardState.today_size_h || '0 B'} / 本日追加`;
@@ -3164,6 +3201,16 @@ function updateDashboardFromServer(data) {
     const count = Math.min(dashboardState.recent_files?.length || 0, 2);
     inboxSummaryEl.textContent = count ? `直近${count}件を表示` : '直近の受付ファイル';
   }
+  if (boxEl) {
+    boxEl.innerHTML = renderReceiveBoxes(dashboardState.receive_boxes || [], {
+      emptyText: '案件や用途ごとの専用QRを作れます',
+      limit: 3,
+    });
+  }
+  if (boxSummaryEl) {
+    const count = Number(dashboardState.receive_box_count || dashboardState.receive_boxes?.length || 0);
+    boxSummaryEl.textContent = count ? `${count}個の受付口` : '専用QRの受付口';
+  }
 }
 
 async function fetchDashboardInfo(limit = 2) {
@@ -3174,6 +3221,55 @@ async function fetchDashboardInfo(limit = 2) {
     updateDashboardFromServer(data.dashboard || {});
   } catch (e) {
     console.error('dashboard info error', e);
+  }
+}
+
+function createReceiveBox() {
+  showInputModal('受付ボックス作成', '受付名（例: 現場写真 / 見積資料 / 修理受付）', '', async (name) => {
+    if (!name) return;
+    try {
+      const res = await fetch('/api/receive-boxes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || '作成に失敗しました');
+      showToast('受付ボックスを作成しました', 'success');
+      updateDashboardFromServer({ receive_boxes: data.boxes || [], receive_box_count: data.count || (data.boxes || []).length });
+      if (!currentSubpath()) refreshFileList();
+      if (data.box?.path) openReceiveMode(data.box.path);
+    } catch (e) {
+      showToast(e.message || '受付ボックスを作成できませんでした', 'error');
+    }
+  });
+}
+
+async function openReceiveBoxPanel() {
+  const panel = document.getElementById('side-panel');
+  const body = document.getElementById('side-panel-body');
+  const title = document.getElementById('side-panel-title');
+  if (!panel || !body || !title) return;
+  title.textContent = '\uD83D\uDCE6 受付ボックス';
+  body.innerHTML = '<div style="padding:1rem;color:var(--text-secondary);">受付ボックスを読み込み中...</div>';
+  panel.classList.add('active');
+
+  try {
+    const res = await fetch('/api/receive-boxes');
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || 'receive boxes error');
+    updateDashboardFromServer({ receive_boxes: data.boxes || [], receive_box_count: data.count || 0 });
+    body.innerHTML = `
+      <div style="display:flex;gap:.5rem;align-items:center;justify-content:space-between;margin-bottom:.75rem;flex-wrap:wrap;">
+        <div style="font-size:.82rem;color:var(--text-secondary);font-weight:800;">用途ごとに専用QRと保存先を分けます</div>
+        <button class="btn btn-sm btn-accent" onclick="createReceiveBox()">+ 新規作成</button>
+      </div>
+      <div class="dashboard-box-list" style="max-height:none;padding:0;">
+        ${renderReceiveBoxes(data.boxes || [], { emptyText: '受付ボックスはまだありません。新規作成から始められます' })}
+      </div>`;
+  } catch (e) {
+    console.error(e);
+    body.innerHTML = '<div style="padding:1rem;color:var(--danger);">受付ボックスを読み込めませんでした</div>';
   }
 }
 
